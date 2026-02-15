@@ -118,3 +118,43 @@ _Session duration: 10m 37s — 2026-02-15 15:36:11_
 - The GEMINI_API_KEY in `.env` returns `API_KEY_INVALID` from the Gemini API. User needs to provide a valid key for live verification.
 - Added fail-fast behavior: auth errors abort immediately instead of retrying all batches. 3 consecutive failures also trigger abort.
 - LanceDB 0.29.2 uses `list_tables()` returning `ListTablesResponse` object; access `.tables` for the list of names.
+
+_Session duration: 12m 22s — 2026-02-15 15:50:31_
+
+---
+
+## Phase 4: File Summaries (Map)
+
+**Status**: COMPLETE (code verified via unit tests; live verification requires valid GEMINI_API_KEY)
+**Date**: 2026-02-15
+
+### Files Created
+- `src/indiseek/indexer/summarizer.py` — Summarizer class: LLM-summarizes source files, stores in SQLite file_summaries table
+
+### Files Modified
+- `src/indiseek/storage/sqlite_store.py` — added file summary methods: insert_file_summary, insert_file_summaries, get_file_summaries (with optional directory scoping), get_directory_tree
+- `src/indiseek/agent/provider.py` — added GenerationProvider protocol, added generate() method to GeminiProvider with system instruction support
+- `scripts/index.py` — added `--summarize` flag, runs summarization after embedding step
+- `CLAUDE.md` — added summarization command documentation
+- `tests/test_summarizer.py` — 16 tests covering storage methods, summarizer, and provider
+
+### Test Results
+- 57/57 tests passing (41 existing + 16 new)
+- `python3 -m pytest tests/ -v` — all green
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **Summarizer**: Walks repo using git ls-files (with manual fallback), skips SKIP_DIRS (node_modules, dist, .git, etc.), supports SOURCE_EXTENSIONS (.ts, .tsx, .js, .jsx, .mjs, .cjs, .json, .md, .yaml, .yml)
+- **Rate limiting**: Configurable delay (default 0.5s) between API calls
+- **Error handling**: Fail-fast on auth errors (API_KEY_INVALID, PERMISSION_DENIED), 5 consecutive failures trigger abort
+- **Truncation**: Large files (>30k chars) are truncated before sending to LLM
+- **GeminiProvider.generate()**: Uses `client.models.generate_content()` with optional system_instruction via GenerateContentConfig
+- **Storage**: insert_file_summary uses INSERT OR REPLACE (upsert) for re-runs; get_file_summaries supports directory prefix filtering; get_directory_tree builds nested dict structure
+
+### Verification Results
+- Unit tests verify: insert/upsert, batch insert, directory scoping, directory tree nesting, file summarization, large file truncation, repo walking, node_modules skipping, error handling, auth error abort, empty repo handling
+- Live verification (`python scripts/index.py --summarize`) blocked by invalid GEMINI_API_KEY in .env
+
+### Notes
+- Same GEMINI_API_KEY issue as Phase 3 — user needs to provide a valid key for live verification
+- The `get_directory_tree()` success criterion is verified by unit tests (returns nested dict structure)

@@ -470,7 +470,7 @@ LLM-summarize every file in the repo to build a navigable "map" — a hierarchic
 #### Automated Verification:
 - [ ] `python scripts/index.py --summarize` completes
 - [ ] `SELECT count(*) FROM file_summaries` returns > 0
-- [ ] `get_directory_tree()` returns a nested structure
+- [x] `get_directory_tree()` returns a nested structure
 
 #### Manual Verification:
 - [ ] Spot-check summaries: they accurately describe file responsibilities
@@ -478,9 +478,9 @@ LLM-summarize every file in the repo to build a navigable "map" — a hierarchic
 - [ ] Directory tree is navigable and useful for orientation
 
 #### End-of-Phase:
-- [ ] Update `CLAUDE.md` with summarization commands
+- [x] Update `CLAUDE.md` with summarization commands
 
-**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation.
+**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation. Automated/manual verification items above (except `get_directory_tree()`) require a valid GEMINI_API_KEY — code is implemented and unit-tested (57 tests, all passing).
 
 ---
 

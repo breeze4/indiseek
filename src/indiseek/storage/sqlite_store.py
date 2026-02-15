@@ -277,6 +277,57 @@ class SqliteStore:
         )
         return [dict(row) for row in cur.fetchall()]
 
+    # ── File summary operations ──
+
+    def insert_file_summary(
+        self, file_path: str, summary: str, language: str | None, line_count: int | None
+    ) -> None:
+        """Insert or replace a file summary."""
+        self._conn.execute(
+            """INSERT OR REPLACE INTO file_summaries (file_path, summary, language, line_count)
+               VALUES (?, ?, ?, ?)""",
+            (file_path, summary, language, line_count),
+        )
+        self._conn.commit()
+
+    def insert_file_summaries(
+        self, summaries: list[tuple[str, str, str | None, int | None]]
+    ) -> None:
+        """Batch insert file summaries. Each tuple: (file_path, summary, language, line_count)."""
+        self._conn.executemany(
+            """INSERT OR REPLACE INTO file_summaries (file_path, summary, language, line_count)
+               VALUES (?, ?, ?, ?)""",
+            summaries,
+        )
+        self._conn.commit()
+
+    def get_file_summaries(self, directory: str | None = None) -> list[dict]:
+        """Get file summaries, optionally scoped to a subdirectory."""
+        if directory:
+            # Ensure directory ends with / for prefix matching
+            prefix = directory.rstrip("/") + "/"
+            cur = self._conn.execute(
+                "SELECT * FROM file_summaries WHERE file_path LIKE ? ORDER BY file_path",
+                (prefix + "%",),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM file_summaries ORDER BY file_path"
+            )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_directory_tree(self) -> dict:
+        """Return nested dict of {dir: {file: summary, subdir: {...}}}."""
+        summaries = self.get_file_summaries()
+        tree: dict = {}
+        for row in summaries:
+            parts = row["file_path"].split("/")
+            node = tree
+            for part in parts[:-1]:
+                node = node.setdefault(part, {})
+            node[parts[-1]] = row["summary"]
+        return tree
+
     # ── Counts ──
 
     def count(self, table: str) -> int:

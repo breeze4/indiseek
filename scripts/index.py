@@ -49,6 +49,11 @@ def main() -> None:
         action="store_true",
         help="Embed chunks using Gemini and store in LanceDB (requires GEMINI_API_KEY)",
     )
+    parser.add_argument(
+        "--summarize",
+        action="store_true",
+        help="LLM-summarize each source file to build a map (requires GEMINI_API_KEY)",
+    )
     args = parser.parse_args()
 
     repo_path = config.REPO_PATH
@@ -132,6 +137,19 @@ def main() -> None:
         n_embedded = embedder.embed_all_chunks()
         print(f"  Chunks embedded: {n_embedded}")
         print(f"  LanceDB: {config.LANCEDB_PATH}")
+
+    # Summarize files if requested
+    if args.summarize:
+        if not config.GEMINI_API_KEY:
+            print("\nError: --summarize requires GEMINI_API_KEY in .env", file=sys.stderr)
+            sys.exit(1)
+
+        print("\nSummarizing files...")
+        from indiseek.indexer.summarizer import Summarizer
+
+        summarizer = Summarizer(store)
+        n_summarized = summarizer.summarize_repo(repo_path)
+        print(f"  Files summarized: {n_summarized}")
 
     elapsed = time.time() - start
     print(f"\nDone in {elapsed:.1f}s")
