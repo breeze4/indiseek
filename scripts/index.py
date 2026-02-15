@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 import time
@@ -36,6 +37,15 @@ def get_tracked_files(repo_path: Path) -> list[Path]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Index a TypeScript repository")
+    parser.add_argument(
+        "--scip-path",
+        type=Path,
+        default=None,
+        help="Path to SCIP index file (default: {REPO_PATH}/index.scip)",
+    )
+    args = parser.parse_args()
+
     repo_path = config.REPO_PATH
     if not repo_path or not repo_path.is_dir():
         print(f"Error: REPO_PATH={repo_path} is not a valid directory.", file=sys.stderr)
@@ -53,8 +63,8 @@ def main() -> None:
     ts_files = get_tracked_files(repo_path)
     print(f"Found {len(ts_files)} TypeScript/TSX files")
 
-    # Parse
-    parser = TypeScriptParser()
+    # Parse with Tree-sitter
+    ts_parser = TypeScriptParser()
     total_symbols = 0
     total_chunks = 0
     errors = 0
@@ -65,8 +75,8 @@ def main() -> None:
             print(f"  Parsing {i}/{len(ts_files)}: {relative}")
 
         try:
-            symbols = parser.parse_file(fpath, relative)
-            chunks = parser.chunk_file(fpath, relative)
+            symbols = ts_parser.parse_file(fpath, relative)
+            chunks = ts_parser.chunk_file(fpath, relative)
 
             if symbols:
                 store.insert_symbols(symbols)
@@ -79,11 +89,31 @@ def main() -> None:
             errors += 1
             print(f"  Warning: Failed to parse {relative}: {e}", file=sys.stderr)
 
-    elapsed = time.time() - start
-    print(f"\nDone in {elapsed:.1f}s")
+    print(f"\nTree-sitter parsing complete:")
     print(f"  Files parsed: {len(ts_files)} ({errors} errors)")
     print(f"  Symbols extracted: {total_symbols}")
     print(f"  Chunks created: {total_chunks}")
+
+    # Load SCIP cross-references if available
+    scip_path = args.scip_path
+    if scip_path is None:
+        scip_path = repo_path / "index.scip"
+
+    if scip_path.exists():
+        print(f"\nLoading SCIP index: {scip_path}")
+        from indiseek.indexer.scip import ScipLoader
+
+        loader = ScipLoader(store)
+        counts = loader.load(scip_path)
+        print(f"  SCIP symbols loaded: {counts['symbols']}")
+        print(f"  SCIP occurrences loaded: {counts['occurrences']}")
+        print(f"  SCIP relationships loaded: {counts['relationships']}")
+    else:
+        print(f"\nNo SCIP index found at {scip_path}, skipping cross-references.")
+        print("  Run: bash scripts/generate_scip.sh /path/to/repo")
+
+    elapsed = time.time() - start
+    print(f"\nDone in {elapsed:.1f}s")
     print(f"  Database: {config.SQLITE_PATH}")
 
     store.close()

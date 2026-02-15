@@ -182,6 +182,101 @@ class SqliteStore:
         cur = self._conn.execute("SELECT * FROM chunks WHERE file_path = ?", (file_path,))
         return [dict(row) for row in cur.fetchall()]
 
+    # ── SCIP operations ──
+
+    def insert_scip_symbol(self, symbol: str, documentation: str | None = None) -> int:
+        """Insert a SCIP symbol and return its id. Returns existing id if duplicate."""
+        cur = self._conn.execute(
+            "SELECT id FROM scip_symbols WHERE symbol = ?", (symbol,)
+        )
+        row = cur.fetchone()
+        if row:
+            return row[0]
+        cur = self._conn.execute(
+            "INSERT INTO scip_symbols (symbol, documentation) VALUES (?, ?)",
+            (symbol, documentation),
+        )
+        self._conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def insert_scip_occurrences(
+        self, occurrences: list[tuple[int, str, int, int, int, int, str]]
+    ) -> None:
+        """Batch insert SCIP occurrences.
+
+        Each tuple: (symbol_id, file_path, start_line, start_col, end_line, end_col, role)
+        """
+        self._conn.executemany(
+            """INSERT INTO scip_occurrences
+               (symbol_id, file_path, start_line, start_col, end_line, end_col, role)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            occurrences,
+        )
+        self._conn.commit()
+
+    def insert_scip_relationship(
+        self, symbol_id: int, related_symbol_id: int, relationship: str
+    ) -> None:
+        """Insert a SCIP relationship between two symbols."""
+        self._conn.execute(
+            """INSERT INTO scip_relationships (symbol_id, related_symbol_id, relationship)
+               VALUES (?, ?, ?)""",
+            (symbol_id, related_symbol_id, relationship),
+        )
+        self._conn.commit()
+
+    def get_scip_symbol_id(self, symbol: str) -> int | None:
+        """Look up a SCIP symbol id by its string identifier."""
+        cur = self._conn.execute(
+            "SELECT id FROM scip_symbols WHERE symbol = ?", (symbol,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    def get_definition(self, symbol_name: str) -> list[dict]:
+        """Find definition locations for a symbol by name substring match."""
+        cur = self._conn.execute(
+            """SELECT ss.symbol, so.file_path, so.start_line, so.start_col,
+                      so.end_line, so.end_col
+               FROM scip_occurrences so
+               JOIN scip_symbols ss ON so.symbol_id = ss.id
+               WHERE so.role = 'definition' AND ss.symbol LIKE '%' || ? || '%'""",
+            (symbol_name,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_references(self, symbol_name: str) -> list[dict]:
+        """Find all reference locations for a symbol by name substring match."""
+        cur = self._conn.execute(
+            """SELECT ss.symbol, so.file_path, so.start_line, so.start_col,
+                      so.end_line, so.end_col, so.role
+               FROM scip_occurrences so
+               JOIN scip_symbols ss ON so.symbol_id = ss.id
+               WHERE so.role = 'reference' AND ss.symbol LIKE '%' || ? || '%'""",
+            (symbol_name,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_scip_occurrences_by_symbol_id(self, symbol_id: int) -> list[dict]:
+        """Get all occurrences for a specific SCIP symbol id."""
+        cur = self._conn.execute(
+            """SELECT file_path, start_line, start_col, end_line, end_col, role
+               FROM scip_occurrences WHERE symbol_id = ?""",
+            (symbol_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_scip_relationships_for(self, symbol_id: int) -> list[dict]:
+        """Get relationships where this symbol is the subject."""
+        cur = self._conn.execute(
+            """SELECT sr.relationship, ss.symbol AS related_symbol
+               FROM scip_relationships sr
+               JOIN scip_symbols ss ON sr.related_symbol_id = ss.id
+               WHERE sr.symbol_id = ?""",
+            (symbol_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
     # ── Counts ──
 
     def count(self, table: str) -> int:

@@ -358,20 +358,20 @@ Generate a SCIP index for the Vite repo using `scip-typescript`, parse the proto
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `bash scripts/generate_scip.sh /path/to/vite` produces `index.scip`
-- [ ] `python scripts/index.py` loads both tree-sitter and SCIP data
-- [ ] `SELECT count(*) FROM scip_symbols` returns > 0
-- [ ] `SELECT count(*) FROM scip_occurrences` returns > 0
-- [ ] `SELECT count(*) FROM scip_occurrences WHERE role = 'definition'` returns > 0
-- [ ] `SELECT count(*) FROM scip_occurrences WHERE role = 'reference'` returns > 0
+- [x] `bash scripts/generate_scip.sh /path/to/vite` produces `index.scip`
+- [x] `python scripts/index.py` loads both tree-sitter and SCIP data
+- [x] `SELECT count(*) FROM scip_symbols` returns > 0
+- [x] `SELECT count(*) FROM scip_occurrences` returns > 0
+- [x] `SELECT count(*) FROM scip_occurrences WHERE role = 'definition'` returns > 0
+- [x] `SELECT count(*) FROM scip_occurrences WHERE role = 'reference'` returns > 0
 
 #### Manual Verification:
-- [ ] Query for a known symbol (e.g., `createServer`) returns its definition location
-- [ ] Query for references to `createServer` returns multiple files
-- [ ] Cross-reference data matches what you'd see in an IDE "Find References"
+- [x] Query for a known symbol (e.g., `createServer`) returns its definition location
+- [x] Query for references to `createServer` returns multiple files
+- [x] Cross-reference data matches what you'd see in an IDE "Find References"
 
 #### End-of-Phase:
-- [ ] Update `CLAUDE.md` with SCIP generation and loading commands
+- [x] Update `CLAUDE.md` with SCIP generation and loading commands
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation.
 

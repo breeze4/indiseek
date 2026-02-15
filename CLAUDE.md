@@ -23,9 +23,18 @@ pytest
 ruff check src/
 ```
 
+## Generate SCIP Index (requires Node.js)
+```
+bash scripts/generate_scip.sh /path/to/repo
+```
+
 ## Index (after Vite is cloned and .env configured)
 ```
+# Tree-sitter only
 python scripts/index.py
+
+# Tree-sitter + SCIP cross-references
+python scripts/index.py --scip-path /path/to/repo/index.scip
 ```
 
 ## Serve
@@ -38,4 +47,4 @@ uvicorn indiseek.api.server:app
 - scripts/ — CLI entry points
 - tests/ — pytest tests
 - docs/ — spec and plans
-- proto/ — SCIP protobuf schema (future)
+- proto/ — SCIP protobuf schema
