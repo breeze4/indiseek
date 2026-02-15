@@ -35,6 +35,9 @@ python scripts/index.py
 
 # Tree-sitter + SCIP cross-references
 python scripts/index.py --scip-path /path/to/repo/index.scip
+
+# Tree-sitter + SCIP + semantic embeddings (requires GEMINI_API_KEY in .env)
+python scripts/index.py --scip-path /path/to/repo/index.scip --embed
 ```
 
 ## Serve

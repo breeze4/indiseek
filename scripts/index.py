@@ -44,6 +44,11 @@ def main() -> None:
         default=None,
         help="Path to SCIP index file (default: {REPO_PATH}/index.scip)",
     )
+    parser.add_argument(
+        "--embed",
+        action="store_true",
+        help="Embed chunks using Gemini and store in LanceDB (requires GEMINI_API_KEY)",
+    )
     args = parser.parse_args()
 
     repo_path = config.REPO_PATH
@@ -111,6 +116,22 @@ def main() -> None:
     else:
         print(f"\nNo SCIP index found at {scip_path}, skipping cross-references.")
         print("  Run: bash scripts/generate_scip.sh /path/to/repo")
+
+    # Embed chunks if requested
+    if args.embed:
+        if not config.GEMINI_API_KEY:
+            print("\nError: --embed requires GEMINI_API_KEY in .env", file=sys.stderr)
+            sys.exit(1)
+
+        print("\nEmbedding chunks...")
+        from indiseek.indexer.embedder import Embedder
+        from indiseek.storage.vector_store import VectorStore
+
+        vector_store = VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS)
+        embedder = Embedder(store, vector_store)
+        n_embedded = embedder.embed_all_chunks()
+        print(f"  Chunks embedded: {n_embedded}")
+        print(f"  LanceDB: {config.LANCEDB_PATH}")
 
     elapsed = time.time() - start
     print(f"\nDone in {elapsed:.1f}s")

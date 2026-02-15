@@ -77,3 +77,44 @@ This file is the handoff document between sessions — read it to understand wha
 - Local symbols (prefixed with "local ") are skipped during loading — they're file-scoped and not useful for cross-project navigation
 - The SCIP loader handles both 3-element ranges (same-line) and 4-element ranges (cross-line)
 - insert_scip_symbol uses upsert semantics (returns existing id for duplicate symbols)
+
+_Session duration: 10m 37s — 2026-02-15 15:36:11_
+
+---
+
+## Phase 3: Semantic Embedding (LanceDB)
+
+**Status**: COMPLETE (code verified via unit tests; live verification requires valid GEMINI_API_KEY)
+**Date**: 2026-02-15
+**Commit**: `85f34c0`
+
+### Files Created
+- `src/indiseek/agent/provider.py` — EmbeddingProvider protocol + GeminiProvider using `google-genai` SDK
+- `src/indiseek/storage/vector_store.py` — VectorStore wrapping LanceDB with cosine similarity search
+- `src/indiseek/indexer/embedder.py` — Embedder class, reads chunks from SQLite, embeds via provider, stores in LanceDB
+- `tests/test_embedding.py` — 12 tests covering VectorStore, Embedder, and GeminiProvider
+
+### Files Modified
+- `scripts/index.py` — added `--embed` flag, validates GEMINI_API_KEY, runs embedding after tree-sitter + SCIP
+- `CLAUDE.md` — added embedding command documentation
+
+### Test Results
+- 41/41 tests passing (29 existing + 12 new)
+- `python3 -m pytest tests/ -v` — all green
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **GeminiProvider**: Uses `google.genai.Client.models.embed_content()` with configurable model and dimensionality
+- **VectorStore**: LanceDB with PyArrow schema (768-dim float32 vectors + metadata), cosine distance search
+- **Embedder**: Batched embedding (default 20 chunks/batch), fail-fast on auth errors, 3-consecutive-error abort
+- **LanceDB API**: Uses `list_tables().tables` (not deprecated `table_names()`) to check for existing tables
+
+### Verification Results
+- Unit tests verify: table creation, data insertion, search ranking, limit, null handling, persistence across re-opens
+- Unit tests verify: batched embedding, empty DB handling, searchability after embedding, retry on transient errors
+- Live verification (`python scripts/index.py --embed`) blocked by invalid GEMINI_API_KEY in .env
+
+### Notes
+- The GEMINI_API_KEY in `.env` returns `API_KEY_INVALID` from the Gemini API. User needs to provide a valid key for live verification.
+- Added fail-fast behavior: auth errors abort immediately instead of retrying all batches. 3 consecutive failures also trigger abort.
+- LanceDB 0.29.2 uses `list_tables()` returning `ListTablesResponse` object; access `.tables` for the list of names.

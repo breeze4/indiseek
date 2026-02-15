@@ -429,9 +429,9 @@ Embed the AST-scoped code chunks from Phase 1 using Gemini's embedding API, stor
 - [ ] Embedding step completes in reasonable time (< 10 min for Vite)
 
 #### End-of-Phase:
-- [ ] Update `CLAUDE.md` with embedding commands and GEMINI_API_KEY requirement
+- [x] Update `CLAUDE.md` with embedding commands and GEMINI_API_KEY requirement
 
-**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation.
+**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation. Automated/manual verification items above require a valid GEMINI_API_KEY — code is implemented and unit-tested (12 tests, all passing).
 
 ---
 
