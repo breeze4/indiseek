@@ -78,7 +78,37 @@ def _reciprocal_rank_fusion(
     ]
 
 
-EmbedFn = type(None)  # placeholder — replaced by actual callable at runtime
+def format_results(results: list[HybridResult], query: str) -> str:
+    """Format search results for LLM consumption.
+
+    Args:
+        results: List of HybridResult from CodeSearcher.search().
+        query: The original query string.
+
+    Returns:
+        Formatted string with file paths, line ranges, content snippets, and scores.
+    """
+    if not results:
+        return f"No results found for '{query}'."
+
+    lines = [f"Search results for '{query}' ({len(results)} result(s)):"]
+    lines.append("")
+
+    for i, r in enumerate(results, 1):
+        symbol_info = f" [{r.symbol_name}]" if r.symbol_name else ""
+        lines.append(f"  {i}. {r.file_path}{symbol_info} ({r.chunk_type}, {r.match_type})")
+        lines.append(f"     Score: {r.score:.4f}")
+        # Show a truncated content preview
+        preview = r.content.strip()
+        if len(preview) > 300:
+            preview = preview[:300] + "..."
+        for pl in preview.splitlines()[:8]:
+            lines.append(f"     | {pl}")
+        if len(preview.splitlines()) > 8:
+            lines.append(f"     | ... ({len(preview.splitlines())} lines total)")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 class CodeSearcher:

@@ -1,0 +1,56 @@
+"""read_map tool — returns directory structure with file summaries."""
+
+from __future__ import annotations
+
+from indiseek.storage.sqlite_store import SqliteStore
+
+
+def _format_tree(tree: dict, prefix: str = "", is_root: bool = True) -> str:
+    """Recursively format a nested dict as a readable tree with summaries."""
+    lines: list[str] = []
+    items = sorted(tree.items())
+    for i, (name, value) in enumerate(items):
+        is_last = i == len(items) - 1
+        connector = "" if is_root else ("└── " if is_last else "├── ")
+        child_prefix = "" if is_root else (prefix + ("    " if is_last else "│   "))
+
+        if isinstance(value, dict):
+            lines.append(f"{prefix}{connector}{name}/")
+            lines.append(_format_tree(value, child_prefix, is_root=False))
+        else:
+            # value is the summary string
+            lines.append(f"{prefix}{connector}{name} — {value}")
+
+    return "\n".join(line for line in lines if line)
+
+
+def read_map(store: SqliteStore, path: str | None = None) -> str:
+    """Return directory structure with file summaries.
+
+    Args:
+        store: SQLite store with file_summaries table.
+        path: Optional subdirectory to scope results to.
+
+    Returns:
+        Formatted tree string with file summaries.
+    """
+    if path:
+        summaries = store.get_file_summaries(directory=path)
+        if not summaries:
+            return f"No files found under '{path}'."
+        # Build a scoped tree from the summaries
+        tree: dict = {}
+        for row in summaries:
+            parts = row["file_path"].split("/")
+            node = tree
+            for part in parts[:-1]:
+                node = node.setdefault(part, {})
+            node[parts[-1]] = row["summary"]
+        header = f"Directory: {path}\n\n"
+    else:
+        tree = store.get_directory_tree()
+        if not tree:
+            return "No file summaries available. Run indexing with --summarize first."
+        header = "Repository map:\n\n"
+
+    return header + _format_tree(tree)

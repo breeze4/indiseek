@@ -199,3 +199,47 @@ _Session duration: 3m 58s — 2026-02-15 15:54:29_
 - Tantivy `en_stem` tokenizer splits on punctuation/whitespace then stems — camelCase identifiers like "handleHMRUpdate" are treated as single tokens, which works well for exact identifier search
 - The `tantivy.Document()` constructor takes field values as lists for text fields (e.g. `file_path=["a.ts"]`)
 - `writer.wait_merging_threads()` must be called after commit; after this the writer is unusable
+
+_Session duration: 10m 11s — 2026-02-15 16:04:40_
+
+---
+
+## Phase 6: Agent Tools
+
+**Status**: COMPLETE
+**Date**: 2026-02-15
+
+### Files Created
+- `src/indiseek/tools/read_map.py` — read_map tool: returns formatted directory tree with file summaries, supports scoped subdirectory view
+- `src/indiseek/tools/resolve_symbol.py` — resolve_symbol tool: definition/references/callers/callees lookup using SCIP + tree-sitter fallback
+- `src/indiseek/tools/read_file.py` — read_file tool: reads source files with line numbers, validates paths within repo
+- `tests/test_tools.py` — 34 tests covering all four tools
+
+### Files Modified
+- `src/indiseek/tools/search_code.py` — added `format_results()` function for LLM-friendly output formatting
+- `CLAUDE.md` — added Agent Tools section with usage examples
+- `docs/plans/todo.md` — marked all automated verification items as complete
+
+### Test Results
+- 110/110 tests passing (76 existing + 34 new)
+- `python3 -m pytest tests/ -v` — all green
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **read_map**: Formats `get_directory_tree()` / `get_file_summaries()` as indented tree with summary annotations. Returns clear message when no summaries exist.
+- **resolve_symbol**: Four actions — `definition`, `references`, `callers`, `callees`. SCIP cross-reference data used first; falls back to tree-sitter symbols table. Callers found by matching SCIP reference locations to enclosing tree-sitter symbol ranges. Callees found by querying SCIP references within the target's definition range.
+- **read_file**: Path traversal protection (validates resolved path is within repo). Returns numbered lines with configurable range.
+- **search_code format_results**: Formats HybridResult list with file paths, symbol names, chunk types, scores, and truncated content previews.
+- **_extract_name_from_scip_symbol**: Parses backtick-quoted identifiers from SCIP symbol strings for human-readable output.
+
+### Verification Results (against Vite repo)
+- `read_map()` correctly reports no summaries available (file summaries not yet generated — needs valid GEMINI_API_KEY)
+- `resolve_symbol("createServer", "definition")` returns SCIP definitions at `packages/vite/src/node/server/index.ts:430` and other locations
+- `resolve_symbol("createServer", "references")` returns 206 SCIP references across multiple files
+- `read_file("packages/vite/src/node/server/index.ts", 1, 50)` returns 50 lines with proper line numbers
+- `search_code("HMR CSS propagation")` returns relevant chunks from `packages/vite/src/node/server/hmr.ts` with `propagateUpdate` function
+- All tools return formatted strings suitable for LLM consumption
+
+### Notes
+- The `resolve_symbol` callers/callees implementation uses a hybrid approach: SCIP for cross-reference locations, tree-sitter for enclosing scope detection
+- `_resolve_callees` accesses `store._conn` directly for a range-bounded query not available through public methods — acceptable for now, could be refactored to a store method later

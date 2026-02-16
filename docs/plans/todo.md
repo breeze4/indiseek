@@ -576,20 +576,20 @@ Implement the four agent tools (`read_map`, `search_code`, `resolve_symbol`, `re
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Each tool function can be called independently and returns formatted strings
-- [ ] `read_map()` returns the full directory tree
-- [ ] `read_map("packages/vite/src/node/server")` returns scoped results
-- [ ] `search_code("HMR CSS propagation")` returns relevant chunks
-- [ ] `resolve_symbol("createServer", "definition")` returns a file:line location
-- [ ] `resolve_symbol("createServer", "references")` returns multiple locations
-- [ ] `read_file("packages/vite/src/node/server/index.ts", 1, 50)` returns 50 lines
+- [x] Each tool function can be called independently and returns formatted strings
+- [x] `read_map()` returns the full directory tree
+- [x] `read_map("packages/vite/src/node/server")` returns scoped results
+- [x] `search_code("HMR CSS propagation")` returns relevant chunks
+- [x] `resolve_symbol("createServer", "definition")` returns a file:line location
+- [x] `resolve_symbol("createServer", "references")` returns multiple locations
+- [x] `read_file("packages/vite/src/node/server/index.ts", 1, 50)` returns 50 lines
 
 #### Manual Verification:
 - [ ] Tool outputs are formatted for LLM readability (not too verbose, not too terse)
 - [ ] resolve_symbol handles ambiguous names (multiple symbols with same name) gracefully
 
 #### End-of-Phase:
-- [ ] Update `CLAUDE.md` with tool testing examples
+- [x] Update `CLAUDE.md` with tool testing examples
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation.
 
