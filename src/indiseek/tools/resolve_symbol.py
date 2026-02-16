@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 from indiseek.storage.sqlite_store import SqliteStore
+
+logger = logging.getLogger(__name__)
 
 VALID_ACTIONS = ("definition", "references", "callers", "callees")
 
@@ -38,6 +42,7 @@ def _resolve_definition(store: SqliteStore, symbol_name: str) -> str:
     # Try SCIP first
     scip_defs = store.get_definition(symbol_name)
     if scip_defs:
+        logger.debug("resolve %s/definition: %d SCIP hit(s)", symbol_name, len(scip_defs))
         lines = [f"Definition of '{symbol_name}' (SCIP, {len(scip_defs)} result(s)):"]
         for d in scip_defs:
             lines.append(f"  {d['file_path']}:{d['start_line']}")
@@ -46,11 +51,13 @@ def _resolve_definition(store: SqliteStore, symbol_name: str) -> str:
     # Fall back to tree-sitter symbols
     ts_syms = store.get_symbols_by_name(symbol_name)
     if ts_syms:
+        logger.debug("resolve %s/definition: %d tree-sitter hit(s) (SCIP miss)", symbol_name, len(ts_syms))
         lines = [f"Definition of '{symbol_name}' (tree-sitter, {len(ts_syms)} result(s)):"]
         for s in ts_syms:
             lines.append(f"  {s['file_path']}:{s['start_line']} ({s['kind']})")
         return "\n".join(lines)
 
+    logger.debug("resolve %s/definition: no results", symbol_name)
     return f"No definition found for '{symbol_name}'."
 
 
@@ -59,6 +66,7 @@ def _resolve_references(store: SqliteStore, symbol_name: str) -> str:
     # Try SCIP first
     scip_refs = store.get_references(symbol_name)
     if scip_refs:
+        logger.debug("resolve %s/references: %d SCIP hit(s)", symbol_name, len(scip_refs))
         lines = [f"References to '{symbol_name}' (SCIP, {len(scip_refs)} result(s)):"]
         for r in scip_refs:
             lines.append(f"  {r['file_path']}:{r['start_line']}")
@@ -83,6 +91,7 @@ def _resolve_callers(store: SqliteStore, symbol_name: str) -> str:
     """
     scip_refs = store.get_references(symbol_name)
     if not scip_refs:
+        logger.debug("resolve %s/callers: no SCIP references", symbol_name)
         return f"No callers found for '{symbol_name}' (no SCIP reference data)."
 
     callers: list[str] = []
@@ -103,9 +112,11 @@ def _resolve_callers(store: SqliteStore, symbol_name: str) -> str:
                     )
 
     if callers:
+        logger.debug("resolve %s/callers: %d caller(s) from %d ref(s)", symbol_name, len(callers), len(scip_refs))
         header = f"Callers of '{symbol_name}' ({len(callers)} result(s)):"
         return "\n".join([header] + callers)
 
+    logger.debug("resolve %s/callers: %d refs but no enclosing symbols", symbol_name, len(scip_refs))
     return f"No callers found for '{symbol_name}' (references exist but no enclosing symbols found)."
 
 
@@ -158,9 +169,11 @@ def _resolve_callees(store: SqliteStore, symbol_name: str) -> str:
                 callees.append(f"  {name} at {file_path}:{line}")
 
     if callees:
+        logger.debug("resolve %s/callees: %d callee(s)", symbol_name, len(callees))
         header = f"Callees of '{symbol_name}' ({len(callees)} result(s)):"
         return "\n".join([header] + callees)
 
+    logger.debug("resolve %s/callees: none found", symbol_name)
     return f"No callees found for '{symbol_name}'."
 
 

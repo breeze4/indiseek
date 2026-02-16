@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 
 from indiseek.indexer.lexical import LexicalIndexer, LexicalResult
 from indiseek.storage.vector_store import SearchResult as SemanticResult
 from indiseek.storage.vector_store import VectorStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -160,8 +164,13 @@ class CodeSearcher:
     def _semantic_search(self, query: str, limit: int) -> list[HybridResult]:
         if self._vector_store is None or self._embed_fn is None:
             raise RuntimeError("Semantic search requires vector_store and embed_fn")
+        t0 = time.perf_counter()
         query_vector = self._embed_fn(query)
+        embed_ms = (time.perf_counter() - t0) * 1000
+        t1 = time.perf_counter()
         results = self._vector_store.search(query_vector, limit=limit)
+        search_ms = (time.perf_counter() - t1) * 1000
+        logger.debug("semantic: embed %.0fms, search %.0fms, %d results", embed_ms, search_ms, len(results))
         return [
             HybridResult(
                 chunk_id=r.chunk_id,
@@ -178,7 +187,9 @@ class CodeSearcher:
     def _lexical_search(self, query: str, limit: int) -> list[HybridResult]:
         if self._lexical_indexer is None:
             raise RuntimeError("Lexical search requires lexical_indexer")
+        t0 = time.perf_counter()
         results = self._lexical_indexer.search(query, limit=limit)
+        logger.debug("lexical: %.0fms, %d results", (time.perf_counter() - t0) * 1000, len(results))
         return [
             HybridResult(
                 chunk_id=r.chunk_id,
@@ -200,20 +211,32 @@ class CodeSearcher:
         lexical_results: list[LexicalResult] = []
 
         if self._vector_store is not None and self._embed_fn is not None:
+            t0 = time.perf_counter()
             query_vector = self._embed_fn(query)
+            embed_ms = (time.perf_counter() - t0) * 1000
+            t1 = time.perf_counter()
             semantic_results = self._vector_store.search(query_vector, limit=fetch_limit)
+            search_ms = (time.perf_counter() - t1) * 1000
+            logger.debug("hybrid/semantic: embed %.0fms, search %.0fms, %d results", embed_ms, search_ms, len(semantic_results))
 
         if self._lexical_indexer is not None:
+            t0 = time.perf_counter()
             lexical_results = self._lexical_indexer.search(query, limit=fetch_limit)
+            logger.debug("hybrid/lexical: %.0fms, %d results", (time.perf_counter() - t0) * 1000, len(lexical_results))
 
         if not semantic_results and not lexical_results:
+            logger.debug("hybrid: no results from either backend")
             return []
 
         # If only one backend available, fall through to single-mode
         if not semantic_results:
+            logger.debug("hybrid: falling back to lexical-only")
             return self._lexical_search(query, limit)
         if not lexical_results:
+            logger.debug("hybrid: falling back to semantic-only")
             return self._semantic_search(query, limit)
 
         fused = _reciprocal_rank_fusion(semantic_results, lexical_results)
+        hybrid_count = sum(1 for r in fused[:limit] if r.match_type == "hybrid")
+        logger.debug("hybrid/RRF: %d fused -> %d returned (%d in both backends)", len(fused), min(limit, len(fused)), hybrid_count)
         return fused[:limit]

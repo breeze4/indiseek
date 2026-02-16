@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Protocol
 
 from google import genai
 from google.genai import types
 
 from indiseek import config
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingProvider(Protocol):
@@ -50,6 +54,9 @@ class GeminiProvider:
         Returns:
             List of float vectors, one per input text.
         """
+        total_chars = sum(len(t) for t in texts)
+        logger.debug("Embedding %d text(s) (%d chars) via %s", len(texts), total_chars, self._embedding_model)
+        t0 = time.perf_counter()
         result = self._client.models.embed_content(
             model=self._embedding_model,
             contents=texts,
@@ -57,6 +64,7 @@ class GeminiProvider:
                 output_dimensionality=self._embedding_dims,
             ),
         )
+        logger.debug("Embed complete: %.0fms", (time.perf_counter() - t0) * 1000)
         return [e.values for e in result.embeddings]
 
     def generate(self, prompt: str, system: str | None = None) -> str:
@@ -69,6 +77,8 @@ class GeminiProvider:
         Returns:
             The generated text response.
         """
+        logger.debug("Generate via %s (%d char prompt)", self._generation_model, len(prompt))
+        t0 = time.perf_counter()
         gen_config = None
         if system:
             gen_config = types.GenerateContentConfig(
@@ -79,4 +89,5 @@ class GeminiProvider:
             contents=prompt,
             config=gen_config,
         )
+        logger.debug("Generate complete: %d chars, %.0fms", len(response.text or ""), (time.perf_counter() - t0) * 1000)
         return response.text

@@ -347,8 +347,9 @@ class TestAgentLoop:
         agent._client.models.generate_content.side_effect = [fn_resp, text_resp]
 
         result = agent.run("Test budget")
-        # First iteration (0) => remaining = 15 - 0 - 1 = 14
-        assert "14 tool calls remaining" in result.evidence[0].summary
+        # First iteration => "Iteration 1/15, 1 tool calls used"
+        assert "Iteration 1/15" in result.evidence[0].summary
+        assert "tool calls used" in result.evidence[0].summary
 
     def test_system_prompt_includes_repo_map(self, store, repo_dir, searcher):
         """Dynamic system prompt includes the read_map output."""
@@ -358,7 +359,7 @@ class TestAgentLoop:
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         prompt = agent._build_system_prompt()
         assert "Main entry point" in prompt
-        assert "15 tool calls" in prompt
+        assert "15 iterations" in prompt
 
 
 # ── FastAPI server tests ──

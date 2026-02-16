@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_LINE_CAP = 200
 
@@ -78,4 +81,5 @@ def read_file(
             " Use start_line/end_line to read more.)"
         )
 
+    logger.debug("read_file: %s lines %d-%d (%d chars)", path, line_offset, line_offset + len(selected) - 1, len(result))
     return result

@@ -648,13 +648,13 @@ Implement the Gemini-powered agent loop that uses tool-calling to navigate the i
 - [x] `curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"prompt": "What files are in the server directory?"}'` returns a valid JSON response with answer and evidence
 
 #### Manual Verification:
-- [ ] Agent reads the map first before searching
-- [ ] Agent uses multiple tools in sequence to build up context
-- [ ] Evidence trail is coherent and traceable
-- [ ] Answer to "How does Vite's HMR propagation work when a CSS file changes?" includes specific file:line references
-- [ ] Answer is synthesized (not just a dump of search results)
-- [ ] Agent doesn't loop infinitely or get stuck
-- [ ] Response time is acceptable (< 60s for a complex question)
+- [x] Agent reads the map first before searching
+- [x] Agent uses multiple tools in sequence to build up context
+- [x] Evidence trail is coherent and traceable
+- [x] Answer to "How does Vite's HMR propagation work when a CSS file changes?" includes specific file:line references
+- [x] Answer is synthesized (not just a dump of search results)
+- [x] Agent doesn't loop infinitely or get stuck
+- [x] Response time is acceptable (< 60s for a complex question)
 
 #### End-of-Phase:
 - [x] Update `CLAUDE.md` with full serve + query workflow, completing all sections

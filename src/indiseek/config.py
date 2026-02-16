@@ -32,6 +32,7 @@ EMBEDDING_DIMS: int = int(os.getenv("EMBEDDING_DIMS", "768"))
 # Server
 HOST: str = os.getenv("HOST", "0.0.0.0")
 PORT: int = int(os.getenv("PORT", "8000"))
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
 # Derived paths
 SQLITE_PATH: Path = DATA_DIR / "indiseek.db"

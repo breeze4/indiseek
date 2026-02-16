@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import shutil
 from pathlib import Path
 
 import tantivy
 
 from indiseek.storage.sqlite_store import SqliteStore
+
+logger = logging.getLogger(__name__)
+
+# Characters that Tantivy's query parser interprets as syntax
+_TANTIVY_SPECIAL = re.compile(r'[+\-!(){}[\]^"~*?:\\/]')
 
 
 class LexicalIndexer:
@@ -93,7 +100,11 @@ class LexicalIndexer:
         """Search the BM25 index. Returns results sorted by relevance."""
         index = self._get_index()
         searcher = index.searcher()
-        query = index.parse_query(query_str, ["content"])
+        # Strip Tantivy query-parser special chars to avoid syntax errors
+        sanitized = _TANTIVY_SPECIAL.sub(" ", query_str).strip()
+        if not sanitized:
+            return []
+        query = index.parse_query(sanitized, ["content"])
         results = searcher.search(query, limit=limit)
 
         out = []

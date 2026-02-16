@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from indiseek import config
 from indiseek.agent.loop import AgentResult, create_agent_loop
+
+# Configure logging on import — before anything else logs
+logging.basicConfig(
+    level=getattr(logging, config.LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)-5s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +29,10 @@ _agent_loop = None
 def _get_agent_loop():
     global _agent_loop
     if _agent_loop is None:
+        logger.info("Initializing agent loop...")
+        t0 = time.perf_counter()
         _agent_loop = create_agent_loop()
+        logger.info("Agent loop ready (%.2fs)", time.perf_counter() - t0)
     return _agent_loop
 
 
@@ -45,9 +57,18 @@ def health():
 
 @app.post("/query", response_model=QueryResponse)
 def query(req: QueryRequest):
+    logger.info("POST /query prompt=%r", req.prompt[:120])
+    t0 = time.perf_counter()
     try:
         agent = _get_agent_loop()
         result: AgentResult = agent.run(req.prompt)
+        elapsed = time.perf_counter() - t0
+        logger.info(
+            "Query complete: %d evidence steps, %d char answer, %.2fs total",
+            len(result.evidence),
+            len(result.answer),
+            elapsed,
+        )
         return QueryResponse(
             answer=result.answer,
             evidence=[
@@ -59,5 +80,5 @@ def query(req: QueryRequest):
             ],
         )
     except Exception as e:
-        logger.exception("Agent error")
+        logger.exception("Agent error after %.2fs", time.perf_counter() - t0)
         raise HTTPException(status_code=500, detail=str(e))
