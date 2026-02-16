@@ -51,6 +51,17 @@ python scripts/index.py --scip-path /path/to/repo/index.scip --embed --summarize
 uvicorn indiseek.api.server:app
 ```
 
+## Query
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Ask a question (requires GEMINI_API_KEY and completed indexing)
+curl -X POST http://localhost:8000/query \
+    -H "Content-Type: application/json" \
+    -d '{"prompt": "How does Vite HMR propagation work when a CSS file changes?"}'
+```
+
 ## Agent Tools (after indexing)
 ```python
 from indiseek import config
@@ -86,7 +97,9 @@ format_results(results, "HMR CSS propagation")
 
 ## Project Layout
 - src/indiseek/ — main package
+- src/indiseek/agent/ — agent loop (Gemini tool-calling) and LLM provider
 - src/indiseek/tools/ — agent tools (read_map, search_code, resolve_symbol, read_file)
+- src/indiseek/api/ — FastAPI server (POST /query, GET /health)
 - scripts/ — CLI entry points
 - tests/ — pytest tests
 - docs/ — spec and plans

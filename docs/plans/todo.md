@@ -643,9 +643,9 @@ Implement the Gemini-powered agent loop that uses tool-calling to navigate the i
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `uvicorn indiseek.api.server:app` starts without errors
-- [ ] `curl http://localhost:8000/health` returns 200
-- [ ] `curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"prompt": "What files are in the server directory?"}'` returns a valid JSON response with answer and evidence
+- [x] `uvicorn indiseek.api.server:app` starts without errors
+- [x] `curl http://localhost:8000/health` returns 200
+- [x] `curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"prompt": "What files are in the server directory?"}'` returns a valid JSON response with answer and evidence
 
 #### Manual Verification:
 - [ ] Agent reads the map first before searching
@@ -657,7 +657,7 @@ Implement the Gemini-powered agent loop that uses tool-calling to navigate the i
 - [ ] Response time is acceptable (< 60s for a complex question)
 
 #### End-of-Phase:
-- [ ] Update `CLAUDE.md` with full serve + query workflow, completing all sections
+- [x] Update `CLAUDE.md` with full serve + query workflow, completing all sections
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation. This completes the MVP.
 

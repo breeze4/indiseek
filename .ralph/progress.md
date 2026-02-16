@@ -243,3 +243,46 @@ _Session duration: 10m 11s — 2026-02-15 16:04:40_
 ### Notes
 - The `resolve_symbol` callers/callees implementation uses a hybrid approach: SCIP for cross-reference locations, tree-sitter for enclosing scope detection
 - `_resolve_callees` accesses `store._conn` directly for a range-bounded query not available through public methods — acceptable for now, could be refactored to a store method later
+
+_Session duration: 5m 56s — 2026-02-15 16:10:36_
+
+---
+
+## Phase 7: Agent Loop + Query API
+
+**Status**: COMPLETE (code verified via unit tests; live /query endpoint requires valid GEMINI_API_KEY)
+**Date**: 2026-02-15
+
+### Files Created
+- `src/indiseek/agent/loop.py` — AgentLoop class: Gemini tool-calling loop with scratchpad, 4 tool declarations, system prompt, max 15 iterations
+- `src/indiseek/api/server.py` — FastAPI app with POST /query and GET /health endpoints
+- `tests/test_agent.py` — 30 tests covering tool declarations, tool execution, agent loop (mocked Gemini), FastAPI endpoints, and dataclasses
+
+### Files Modified
+- `CLAUDE.md` — added Query section with curl examples, updated Project Layout with agent/ and api/ directories
+- `docs/plans/todo.md` — marked automated verification items and end-of-phase as complete
+
+### Test Results
+- 140/140 tests passing (110 existing + 30 new)
+- `python3 -m pytest tests/ -v` — all green
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **AgentLoop**: Uses `google.genai.Client.models.generate_content()` with `types.Tool(function_declarations=[...])` in AUTO mode. Disables automatic function calling for manual control. Maintains conversation history as a list of `types.Content`. Truncates tool results >15k chars.
+- **Tool declarations**: 4 tools — read_map, search_code, resolve_symbol, read_file — defined as `types.FunctionDeclaration` with JSON Schema parameters.
+- **System prompt**: Instructs agent to read the map first, formulate search strategy, gather evidence with tools, and synthesize with file:line references.
+- **create_agent_loop()**: Factory function that initializes all backends (SQLite, LanceDB, Tantivy) from config. Gracefully handles missing backends (semantic search unavailable without LanceDB/API key, lexical unavailable without Tantivy index).
+- **FastAPI server**: Lazy-initializes agent loop on first request. POST /query accepts `{"prompt": "..."}`, returns `{"answer": "...", "evidence": [{"step": "...", "detail": "..."}]}`. GET /health returns `{"status": "ok"}`.
+- **Error handling**: Tool execution errors captured as evidence (not fatal). Agent errors return HTTP 500.
+
+### Verification Results
+- `uvicorn indiseek.api.server:app` starts without errors
+- `curl http://localhost:8000/health` returns `{"status":"ok"}` (HTTP 200)
+- POST /query endpoint verified via FastAPI TestClient — returns valid JSON with answer and evidence fields
+- All agent loop behaviors verified via mocked Gemini: direct text response, single tool call, multi-tool sequence, max iteration limit, error capture, result truncation
+- Live query verification (`curl -X POST http://localhost:8000/query ...`) requires valid GEMINI_API_KEY
+
+### Notes
+- The `automatic_function_calling` config is explicitly disabled to maintain manual control over tool execution in the agent loop
+- Function call arguments are accessed via `dict(call.args)` since the Gemini SDK returns a MapComposite object
+- The server uses a module-level `_agent_loop` singleton with lazy initialization
