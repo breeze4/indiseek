@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from indiseek.agent.loop import (
-    SYSTEM_PROMPT,
+    SYSTEM_PROMPT_TEMPLATE,
     TOOL_DECLARATIONS,
     AgentLoop,
     AgentResult,
@@ -75,9 +75,10 @@ class TestToolDeclarations:
         schema = read_tool.parameters_json_schema
         assert "path" in schema["required"]
 
-    def test_system_prompt_exists(self):
-        assert len(SYSTEM_PROMPT) > 100
-        assert "read_map" in SYSTEM_PROMPT
+    def test_system_prompt_template_exists(self):
+        assert len(SYSTEM_PROMPT_TEMPLATE) > 100
+        assert "repo_map" in SYSTEM_PROMPT_TEMPLATE
+        assert "max_iterations" in SYSTEM_PROMPT_TEMPLATE
 
 
 # ── Tool execution tests ──
@@ -331,6 +332,33 @@ class TestAgentLoop:
         assert agent._client.models.generate_content.call_count == 2
         assert result.answer == "Done."
         assert len(result.evidence) == 1
+
+    def test_budget_injected_into_evidence(self, store, repo_dir, searcher):
+        """Tool results include remaining iteration count."""
+        store.insert_file_summaries([
+            ("src/main.ts", "Main entry", "ts", 3),
+        ])
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+
+        fn_resp = _make_fn_call_response("read_map", {"path": "src"})
+        text_resp = _make_text_response("Done.")
+
+        agent._client = MagicMock()
+        agent._client.models.generate_content.side_effect = [fn_resp, text_resp]
+
+        result = agent.run("Test budget")
+        # First iteration (0) => remaining = 15 - 0 - 1 = 14
+        assert "14 tool calls remaining" in result.evidence[0].summary
+
+    def test_system_prompt_includes_repo_map(self, store, repo_dir, searcher):
+        """Dynamic system prompt includes the read_map output."""
+        store.insert_file_summaries([
+            ("src/main.ts", "Main entry point", "ts", 3),
+        ])
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        prompt = agent._build_system_prompt()
+        assert "Main entry point" in prompt
+        assert "15 tool calls" in prompt
 
 
 # ── FastAPI server tests ──

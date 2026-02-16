@@ -330,3 +330,31 @@ class TestReadFile:
         result = read_file(repo_dir, "../../../etc/passwd")
         assert "Error" in result
         assert "outside" in result
+
+    def test_default_line_cap(self, tmp_path):
+        """Files over 200 lines are truncated with a notice."""
+        repo = tmp_path / "cap_repo"
+        repo.mkdir()
+        long_file = repo / "long.ts"
+        long_file.write_text("\n".join(f"line {i}" for i in range(1, 301)))
+        result = read_file(repo, "long.ts")
+        assert "showing first 200 of 300 lines" in result
+        assert "start_line/end_line" in result
+        # Line 200 should be present, line 201 should not
+        assert "line 200" in result
+        assert "line 201" not in result
+
+    def test_no_cap_with_explicit_range(self, tmp_path):
+        """Explicit start_line/end_line bypasses the default cap."""
+        repo = tmp_path / "cap_repo2"
+        repo.mkdir()
+        long_file = repo / "long.ts"
+        long_file.write_text("\n".join(f"line {i}" for i in range(1, 301)))
+        result = read_file(repo, "long.ts", start_line=1, end_line=300)
+        assert "showing first 200" not in result
+        assert "line 300" in result
+
+    def test_short_file_no_truncation(self, repo_dir):
+        """Files under 200 lines are not truncated."""
+        result = read_file(repo_dir, "src/main.ts")
+        assert "showing first" not in result

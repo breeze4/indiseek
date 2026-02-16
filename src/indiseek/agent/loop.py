@@ -19,17 +19,26 @@ from indiseek.tools.search_code import CodeSearcher, format_results
 
 MAX_ITERATIONS = 15
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT_TEMPLATE = """\
 You are a codebase research agent. Your job is to answer questions about a codebase \
 by using the tools available to you.
 
-Strategy:
-1. Start by calling read_map() to understand the repository structure.
-2. Based on the question, formulate a search strategy — use search_code for keyword/semantic \
+## Repository map
+The top-level directory structure and file summaries are shown below. \
+Use this to orient yourself — you do NOT need to call read_map() for the full tree.
+
+{repo_map}
+
+## Strategy
+1. Based on the question, formulate a search strategy — use search_code for keyword/semantic \
 searches, resolve_symbol for navigating definitions and references.
-3. Use read_file to examine specific source code when you need exact details.
-4. Gather enough evidence before synthesizing your answer.
-5. Always cite specific file paths and line numbers in your answer.
+2. Use read_file to examine specific source code when you need exact details.
+3. Gather enough evidence before synthesizing your answer.
+4. Always cite specific file paths and line numbers in your answer.
+
+## Budget
+You have {max_iterations} tool calls total. Use the last 1-2 to synthesize your answer. \
+If you're running low, answer with what you have.
 
 Be thorough but efficient. Don't read entire files when a targeted search suffices. \
 Synthesize your findings into a clear, structured answer with evidence."""
@@ -37,14 +46,15 @@ Synthesize your findings into a clear, structured answer with evidence."""
 TOOL_DECLARATIONS = [
     types.FunctionDeclaration(
         name="read_map",
-        description="Returns directory structure and file summaries for the repository. "
-        "Call with no arguments for the full tree, or pass a path to scope to a subdirectory.",
+        description="Returns directory structure and file summaries for a subdirectory. "
+        "The full repository map is already in the system prompt — use this tool only "
+        "to drill into a specific subdirectory for more detail.",
         parameters_json_schema={
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Optional subdirectory path to scope results to.",
+                    "description": "Subdirectory path to scope results to.",
                 },
             },
         },
@@ -92,7 +102,8 @@ TOOL_DECLARATIONS = [
     types.FunctionDeclaration(
         name="read_file",
         description="Read source code from the repository with line numbers. "
-        "Specify start_line and end_line to read a specific range.",
+        "Output is capped at 200 lines by default. Use start_line and end_line "
+        "to read a specific range of a large file.",
         parameters_json_schema={
             "type": "object",
             "properties": {
@@ -149,6 +160,14 @@ class AgentLoop:
         self._client = genai.Client(api_key=api_key or config.GEMINI_API_KEY)
         self._model = model or config.GEMINI_MODEL
 
+    def _build_system_prompt(self) -> str:
+        """Build system prompt with the top-level repo map baked in."""
+        repo_map = read_map(self._store)
+        return SYSTEM_PROMPT_TEMPLATE.format(
+            repo_map=repo_map,
+            max_iterations=MAX_ITERATIONS,
+        )
+
     def _execute_tool(self, name: str, args: dict) -> str:
         """Execute a tool by name with the given arguments."""
         if name == "read_map":
@@ -176,10 +195,11 @@ class AgentLoop:
         """Run the agent loop until a text answer is produced or max iterations reached."""
         evidence: list[EvidenceStep] = []
 
+        system_prompt = self._build_system_prompt()
         tools = [types.Tool(function_declarations=TOOL_DECLARATIONS)]
         gen_config = types.GenerateContentConfig(
             tools=tools,
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=system_prompt,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(
                 disable=True
             ),
@@ -195,7 +215,7 @@ class AgentLoop:
             )
         ]
 
-        for _iteration in range(MAX_ITERATIONS):
+        for iteration in range(MAX_ITERATIONS):
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=contents,
@@ -215,6 +235,7 @@ class AgentLoop:
                 )
 
             # Execute each function call and build response parts
+            remaining = MAX_ITERATIONS - iteration - 1
             fn_response_parts: list[types.Part] = []
             for call in response.function_calls:
                 args = dict(call.args) if call.args else {}
@@ -226,6 +247,15 @@ class AgentLoop:
                 # Truncate long results to stay within context limits
                 if len(result) > 15000:
                     result = result[:15000] + "\n... (truncated)"
+
+                # Inject iteration budget into the result
+                if remaining <= 2:
+                    result += (
+                        f"\n[{remaining} tool calls remaining"
+                        " — synthesize your answer now]"
+                    )
+                else:
+                    result += f"\n[{remaining} tool calls remaining]"
 
                 evidence.append(
                     EvidenceStep(
