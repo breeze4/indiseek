@@ -46,6 +46,40 @@ python scripts/index.py --scip-path /path/to/repo/index.scip --embed --summarize
 python scripts/index.py --scip-path /path/to/repo/index.scip --embed --summarize --lexical
 ```
 
+## Indexing Pipeline Details
+
+The `scripts/index.py` script runs up to 5 steps. Each step is optional except Tree-sitter parsing. The flags `--embed`, `--summarize`, and `--lexical` control which optional steps run.
+
+### Step 1: Tree-sitter Parsing (always runs)
+
+Parses all `.ts`/`.tsx` files using Tree-sitter to extract symbols (functions, classes, interfaces, types, enums, exported variables) and AST-scoped code chunks (one chunk per top-level symbol, with a fallback module-level chunk for files with no extractable symbols). Results are stored in SQLite.
+
+**Cost:** None. Runs locally using `tree-sitter` and `tree-sitter-typescript` Python bindings. Fast — parses thousands of files in seconds.
+
+### Step 2: SCIP Cross-References (runs if `index.scip` exists)
+
+Loads a pre-generated SCIP protobuf index (produced by `scip-typescript`) into SQLite. This provides precise "go to definition", "find all references", and caller/callee relationships across the entire codebase — the same data that powers GitHub Code Search and Sourcegraph.
+
+**Cost:** None. The SCIP index must be generated beforehand via `bash scripts/generate_scip.sh /path/to/repo` (requires Node.js). Both generation and loading are local-only operations.
+
+### Step 3: Semantic Embedding (`--embed`)
+
+Reads all AST-scoped chunks from SQLite, embeds them in batches of 20 using the Gemini Embedding API (`gemini-embedding-001`, 768 dimensions), and stores the vectors in LanceDB. Supports resume — already-embedded chunks are skipped on re-runs.
+
+**Cost:** Gemini Embedding API at **$0.15 per 1M input tokens** (or free on the free tier with rate limits). For Vite (~1,817 chunks, ~377k input tokens), expect roughly **~$0.06** on the paid tier.
+
+### Step 4: File Summarization (`--summarize`)
+
+Sends each source file (ts, tsx, js, jsx, json, md, yaml) to `gemini-2.0-flash` with a system prompt asking for a one-sentence summary of the file's responsibility. Summaries are stored in SQLite and used by the `read_map` tool to build a navigable directory tree. Files are truncated to 30k chars before sending. Supports resume — already-summarized files are skipped on re-runs. A 0.5s delay between requests avoids rate limiting.
+
+**Cost:** Gemini 2.0 Flash API at **$0.10 per 1M input tokens / $0.40 per 1M output tokens** (or free on the free tier). This is the most API-intensive step because every source file gets its own LLM call. For Vite (~1,857 source files, ~1.2M input tokens total, ~46k output tokens), expect roughly **~$0.14** on the paid tier. This step takes the longest wall-clock time due to the per-file rate-limiting delay (~15 min at 0.5s/file).
+
+### Step 5: Lexical Index (`--lexical`)
+
+Builds a Tantivy BM25 full-text search index over all AST-scoped chunks from SQLite. This enables exact-match keyword search (variable names, error codes, identifiers) that semantic search misses.
+
+**Cost:** None. Runs locally using `tantivy` (Rust-based search engine with Python bindings). Rebuilds from scratch each time, fast.
+
 ## Serve
 ```
 uvicorn indiseek.api.server:app

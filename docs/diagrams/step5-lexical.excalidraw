@@ -1,0 +1,578 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "https://excalidraw.com",
+  "elements": [
+    {
+      "id": "title",
+      "type": "text",
+      "x": 80,
+      "y": 20,
+      "width": 369.6,
+      "height": 32.400000000000006,
+      "text": "Step 5: Lexical (BM25) Index",
+      "fontSize": 24,
+      "fontFamily": 2,
+      "textAlign": "center",
+      "verticalAlign": "top",
+      "strokeColor": "#1e1e1e",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "Step 5: Lexical (BM25) Index"
+    },
+    {
+      "id": "cost",
+      "type": "text",
+      "x": 80,
+      "y": 52,
+      "width": 386.1,
+      "height": 17.55,
+      "text": "LOCAL \u00b7 FREE \u00b7 Rust-based Tantivy with Python bindings",
+      "fontSize": 13,
+      "fontFamily": 2,
+      "textAlign": "center",
+      "verticalAlign": "top",
+      "strokeColor": "#2b8a3e",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "LOCAL \u00b7 FREE \u00b7 Rust-based Tantivy with Python bindings"
+    },
+    {
+      "id": "chunks",
+      "type": "rectangle",
+      "x": 80,
+      "y": 100,
+      "width": 180,
+      "height": 50,
+      "strokeColor": "#1971c2",
+      "backgroundColor": "#a5d8ff",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 1,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "id": "a1",
+          "type": "arrow"
+        },
+        {
+          "id": "chunks-text",
+          "type": "text"
+        }
+      ],
+      "isDeleted": false
+    },
+    {
+      "id": "chunks-text",
+      "type": "text",
+      "x": 90,
+      "y": 110,
+      "width": 105.60000000000001,
+      "height": 43.2,
+      "text": "chunks table\nfrom Step 1",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "strokeColor": "#1e1e1e",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "chunks table\nfrom Step 1",
+      "containerId": "chunks"
+    },
+    {
+      "id": "schema",
+      "type": "rectangle",
+      "x": 340,
+      "y": 100,
+      "width": 220,
+      "height": 70,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#b2f2bb",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 1,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "id": "a1",
+          "type": "arrow"
+        },
+        {
+          "id": "a2",
+          "type": "arrow"
+        },
+        {
+          "id": "schema-text",
+          "type": "text"
+        }
+      ],
+      "isDeleted": false
+    },
+    {
+      "id": "schema-text",
+      "type": "text",
+      "x": 350,
+      "y": 110,
+      "width": 228.8,
+      "height": 86.4,
+      "text": "Tantivy Schema\ncontent: en_stem tokenizer\nfile_path, symbol: raw\nchunk_id: integer",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "strokeColor": "#1e1e1e",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "Tantivy Schema\ncontent: en_stem tokenizer\nfile_path, symbol: raw\nchunk_id: integer",
+      "containerId": "schema"
+    },
+    {
+      "id": "a1",
+      "type": "arrow",
+      "x": 260,
+      "y": 125,
+      "width": 80,
+      "height": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          0
+        ]
+      ],
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "strokeColor": "#1e1e1e",
+      "strokeWidth": 2,
+      "roughness": 1,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "isDeleted": false,
+      "boundElements": [],
+      "startBinding": {
+        "elementId": "chunks",
+        "focus": 0,
+        "gap": 5
+      },
+      "endBinding": {
+        "elementId": "schema",
+        "focus": 0,
+        "gap": 5
+      }
+    },
+    {
+      "id": "writer",
+      "type": "rectangle",
+      "x": 340,
+      "y": 210,
+      "width": 220,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#b2f2bb",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 1,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "id": "a2",
+          "type": "arrow"
+        },
+        {
+          "id": "a3",
+          "type": "arrow"
+        },
+        {
+          "id": "writer-text",
+          "type": "text"
+        }
+      ],
+      "isDeleted": false
+    },
+    {
+      "id": "writer-text",
+      "type": "text",
+      "x": 350,
+      "y": 220,
+      "width": 211.20000000000002,
+      "height": 64.80000000000001,
+      "text": "Index Writer\n50MB heap \u00b7 add all docs\ncommit + merge threads",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "strokeColor": "#1e1e1e",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "Index Writer\n50MB heap \u00b7 add all docs\ncommit + merge threads",
+      "containerId": "writer"
+    },
+    {
+      "id": "a2",
+      "type": "arrow",
+      "x": 450,
+      "y": 170,
+      "width": 0,
+      "height": 40,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          40
+        ]
+      ],
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "strokeColor": "#1e1e1e",
+      "strokeWidth": 2,
+      "roughness": 1,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "isDeleted": false,
+      "boundElements": [],
+      "startBinding": {
+        "elementId": "schema",
+        "focus": 0,
+        "gap": 5
+      },
+      "endBinding": {
+        "elementId": "writer",
+        "focus": 0,
+        "gap": 5
+      }
+    },
+    {
+      "id": "idx",
+      "type": "rectangle",
+      "x": 340,
+      "y": 310,
+      "width": 220,
+      "height": 50,
+      "strokeColor": "#1971c2",
+      "backgroundColor": "#a5d8ff",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 1,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "id": "a3",
+          "type": "arrow"
+        },
+        {
+          "id": "idx-text",
+          "type": "text"
+        }
+      ],
+      "isDeleted": false
+    },
+    {
+      "id": "idx-text",
+      "type": "text",
+      "x": 350,
+      "y": 320,
+      "width": 114.4,
+      "height": 43.2,
+      "text": "Tantivy Index\nBM25 on disk",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "strokeColor": "#1e1e1e",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "Tantivy Index\nBM25 on disk",
+      "containerId": "idx"
+    },
+    {
+      "id": "a3",
+      "type": "arrow",
+      "x": 450,
+      "y": 270,
+      "width": 0,
+      "height": 40,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          40
+        ]
+      ],
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "strokeColor": "#1e1e1e",
+      "strokeWidth": 2,
+      "roughness": 1,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "isDeleted": false,
+      "boundElements": [],
+      "startBinding": {
+        "elementId": "writer",
+        "focus": 0,
+        "gap": 5
+      },
+      "endBinding": {
+        "elementId": "idx",
+        "focus": 0,
+        "gap": 5
+      }
+    },
+    {
+      "id": "note",
+      "type": "rectangle",
+      "x": 620,
+      "y": 210,
+      "width": 170,
+      "height": 60,
+      "strokeColor": "#c92a2a",
+      "backgroundColor": "#ffe3e3",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 1,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "id": "note-text",
+          "type": "text"
+        }
+      ],
+      "isDeleted": false
+    },
+    {
+      "id": "note-text",
+      "type": "text",
+      "x": 630,
+      "y": 220,
+      "width": 149.60000000000002,
+      "height": 64.80000000000001,
+      "text": "Full Rebuild\nwipes + recreates\non every run",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "strokeColor": "#1e1e1e",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "Full Rebuild\nwipes + recreates\non every run",
+      "containerId": "note"
+    },
+    {
+      "id": "a-note",
+      "type": "arrow",
+      "x": 560,
+      "y": 240,
+      "width": 60,
+      "height": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          60,
+          0
+        ]
+      ],
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "strokeColor": "#1e1e1e",
+      "strokeWidth": 2,
+      "roughness": 1,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "isDeleted": false,
+      "boundElements": [],
+      "startBinding": {
+        "elementId": "writer",
+        "focus": 0,
+        "gap": 5
+      },
+      "endBinding": {
+        "elementId": "note",
+        "focus": 0,
+        "gap": 5
+      }
+    },
+    {
+      "id": "usage",
+      "type": "rectangle",
+      "x": 340,
+      "y": 380,
+      "width": 220,
+      "height": 50,
+      "strokeColor": "#e67700",
+      "backgroundColor": "#fff3bf",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 1,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "id": "usage-text",
+          "type": "text"
+        }
+      ],
+      "isDeleted": false
+    },
+    {
+      "id": "usage-text",
+      "type": "text",
+      "x": 350,
+      "y": 390,
+      "width": 237.60000000000002,
+      "height": 43.2,
+      "text": "Powers: search_code tool\nexact match for identifiers",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "strokeColor": "#1e1e1e",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "Powers: search_code tool\nexact match for identifiers",
+      "containerId": "usage"
+    },
+    {
+      "id": "d-0",
+      "type": "text",
+      "x": 80,
+      "y": 450,
+      "width": 547.8000000000001,
+      "height": 16.200000000000003,
+      "text": "Catches exact identifiers (variable names, error codes) that semantic search misses",
+      "fontSize": 12,
+      "fontFamily": 3,
+      "textAlign": "left",
+      "verticalAlign": "top",
+      "strokeColor": "#868e96",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "Catches exact identifiers (variable names, error codes) that semantic search misses"
+    },
+    {
+      "id": "d-1",
+      "type": "text",
+      "x": 80,
+      "y": 472,
+      "width": 455.40000000000003,
+      "height": 16.200000000000003,
+      "text": "Tokenizer: English stemming on content, raw storage for paths/symbols",
+      "fontSize": 12,
+      "fontFamily": 3,
+      "textAlign": "left",
+      "verticalAlign": "top",
+      "strokeColor": "#868e96",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "Tokenizer: English stemming on content, raw storage for paths/symbols"
+    },
+    {
+      "id": "d-2",
+      "type": "text",
+      "x": 80,
+      "y": 494,
+      "width": 422.40000000000003,
+      "height": 16.200000000000003,
+      "text": "Used in hybrid mode: BM25 scores combined with vector similarity",
+      "fontSize": 12,
+      "fontFamily": 3,
+      "textAlign": "left",
+      "verticalAlign": "top",
+      "strokeColor": "#868e96",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "Used in hybrid mode: BM25 scores combined with vector similarity"
+    },
+    {
+      "id": "d-3",
+      "type": "text",
+      "x": 80,
+      "y": 516,
+      "width": 442.20000000000005,
+      "height": 16.200000000000003,
+      "text": "No resume: always rebuilds from scratch (fast enough to not matter)",
+      "fontSize": 12,
+      "fontFamily": 3,
+      "textAlign": "left",
+      "verticalAlign": "top",
+      "strokeColor": "#868e96",
+      "isDeleted": false,
+      "opacity": 100,
+      "angle": 0,
+      "groupIds": [],
+      "rawText": "No resume: always rebuilds from scratch (fast enough to not matter)"
+    }
+  ],
+  "appState": {
+    "viewBackgroundColor": "#ffffff",
+    "gridSize": 20
+  },
+  "files": {}
+}
