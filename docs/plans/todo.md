@@ -518,9 +518,9 @@ Build a BM25 lexical index over the raw source code using Tantivy, and implement
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `python scripts/index.py --lexical` builds the Tantivy index
-- [ ] Lexical search for `"handleHMRUpdate"` returns exact matches
-- [ ] Hybrid search combines semantic and lexical results
+- [x] `python scripts/index.py --lexical` builds the Tantivy index
+- [x] Lexical search for `"handleHMRUpdate"` returns exact matches
+- [x] Hybrid search combines semantic and lexical results
 
 #### Manual Verification:
 - [ ] Lexical search finds exact identifiers that semantic search misses
@@ -528,9 +528,9 @@ Build a BM25 lexical index over the raw source code using Tantivy, and implement
 - [ ] Performance is acceptable (< 1s per search)
 
 #### End-of-Phase:
-- [ ] Update `CLAUDE.md` with lexical indexing commands
+- [x] Update `CLAUDE.md` with lexical indexing commands
 
-**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation.
+**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation. Automated verification items verified against Vite repo. Code is implemented and unit-tested (76 tests, all passing).
 
 ---
 

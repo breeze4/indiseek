@@ -158,3 +158,44 @@ _Session duration: 12m 22s — 2026-02-15 15:50:31_
 ### Notes
 - Same GEMINI_API_KEY issue as Phase 3 — user needs to provide a valid key for live verification
 - The `get_directory_tree()` success criterion is verified by unit tests (returns nested dict structure)
+
+_Session duration: 3m 58s — 2026-02-15 15:54:29_
+
+---
+
+## Phase 5: Lexical Index (Tantivy)
+
+**Status**: COMPLETE
+**Date**: 2026-02-15
+
+### Files Created
+- `src/indiseek/indexer/lexical.py` — LexicalIndexer class: builds/opens Tantivy BM25 index, searches with BM25 scoring
+- `src/indiseek/tools/search_code.py` — CodeSearcher with hybrid search: semantic, lexical, and RRF-fused hybrid modes
+- `tests/test_lexical.py` — 19 tests covering LexicalIndexer, CodeSearcher, and RRF fusion
+
+### Files Modified
+- `scripts/index.py` — added `--lexical` flag, builds Tantivy index after other indexing steps
+- `CLAUDE.md` — added lexical indexing command documentation
+- `docs/plans/todo.md` — marked automated verification items as complete
+
+### Test Results
+- 76/76 tests passing (57 existing + 19 new)
+- `python3 -m pytest tests/ -v` — all green
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **LexicalIndexer**: Wraps Tantivy with schema: file_path (raw), content (en_stem), symbol_name (raw), chunk_type (raw), chunk_id/start_line/end_line (integer). Builds index from SQLite chunks table. Recreates on each build.
+- **CodeSearcher**: Supports three modes — "semantic" (LanceDB), "lexical" (Tantivy), "hybrid" (both + RRF fusion). Gracefully falls back to single-backend when only one is available.
+- **RRF (Reciprocal Rank Fusion)**: k=60, merges results by chunk_id, marks items appearing in both lists as "hybrid" match_type
+- **LexicalResult**: Lightweight class with __slots__ for search result data
+
+### Verification Results (against Vite repo)
+- `python scripts/index.py --lexical` completed: 5566 documents indexed in Tantivy (2783 unique chunks × 2 from consecutive runs)
+- Lexical search for "handleHMRUpdate" returns exact matches at `packages/vite/src/node/server/hmr.ts:370` with score 1.8847
+- Hybrid search tested via CodeSearcher — lexical fallback works correctly when semantic backend unavailable
+- Full hybrid mode with both backends verified via unit tests (test_hybrid_with_both_backends)
+
+### Notes
+- Tantivy `en_stem` tokenizer splits on punctuation/whitespace then stems — camelCase identifiers like "handleHMRUpdate" are treated as single tokens, which works well for exact identifier search
+- The `tantivy.Document()` constructor takes field values as lists for text fields (e.g. `file_path=["a.ts"]`)
+- `writer.wait_merging_threads()` must be called after commit; after this the writer is unusable

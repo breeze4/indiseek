@@ -54,6 +54,11 @@ def main() -> None:
         action="store_true",
         help="LLM-summarize each source file to build a map (requires GEMINI_API_KEY)",
     )
+    parser.add_argument(
+        "--lexical",
+        action="store_true",
+        help="Build a Tantivy BM25 lexical index over code chunks",
+    )
     args = parser.parse_args()
 
     repo_path = config.REPO_PATH
@@ -150,6 +155,16 @@ def main() -> None:
         summarizer = Summarizer(store)
         n_summarized = summarizer.summarize_repo(repo_path)
         print(f"  Files summarized: {n_summarized}")
+
+    # Build lexical index if requested
+    if args.lexical:
+        print("\nBuilding lexical index...")
+        from indiseek.indexer.lexical import LexicalIndexer
+
+        lexical_indexer = LexicalIndexer(store, config.TANTIVY_PATH)
+        n_indexed = lexical_indexer.build_index()
+        print(f"  Documents indexed in Tantivy: {n_indexed}")
+        print(f"  Index path: {config.TANTIVY_PATH}")
 
     elapsed = time.time() - start
     print(f"\nDone in {elapsed:.1f}s")

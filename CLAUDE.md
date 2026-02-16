@@ -41,6 +41,9 @@ python scripts/index.py --scip-path /path/to/repo/index.scip --embed
 
 # Tree-sitter + SCIP + embeddings + file summaries (requires GEMINI_API_KEY in .env)
 python scripts/index.py --scip-path /path/to/repo/index.scip --embed --summarize
+
+# Full pipeline: all indexing steps including BM25 lexical index
+python scripts/index.py --scip-path /path/to/repo/index.scip --embed --summarize --lexical
 ```
 
 ## Serve
