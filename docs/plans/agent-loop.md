@@ -77,7 +77,7 @@ Additionally, query traces (002-004) reveal agent inefficiencies: micro-reads wa
 
 **File:** `src/indiseek/agent/loop.py`
 
-- [ ] After search_code formatting, extract top symbol names and append tip if resolve_symbol not yet used
+- [x] After search_code formatting, extract top symbol names and append tip if resolve_symbol not yet used
 
 **Test:** `tests/test_agent.py` — add `test_search_code_suggests_resolve_symbol`
 

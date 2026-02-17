@@ -673,9 +673,9 @@ Address inefficiencies observed in query traces to reduce iteration count and im
 - [x] **Deduplicate similar searches**: Use Jaccard similarity to cache and reuse results for near-identical search queries.
 - [x] **Coalesce file reads**: Cache full file contents on first access and serve subsequent range requests from memory.
 - [x] **Cache resolve_symbol calls**: Prevent redundant SCIP lookups for the same symbol/action pair.
-- [ ] **Improve Evidence Summaries**: Use specialized summary functions for each tool to make the `EvidenceStep` log more readable.
-- [ ] **Reinforce resolve_symbol usage**: Update system prompt and mid-loop hints to push the model toward precise navigation over fuzzy search.
-- [ ] **Encourage Parallel Tool Calls**: Refine system prompt instructions to highlight batching independent operations.
+- [x] **Improve Evidence Summaries**: Use specialized summary functions for each tool to make the `EvidenceStep` log more readable.
+- [x] **Reinforce resolve_symbol usage**: Update system prompt and mid-loop hints to push the model toward precise navigation over fuzzy search.
+- [x] **Encourage Parallel Tool Calls**: Refine system prompt instructions to highlight batching independent operations.
 
 ---
 
