@@ -1,5 +1,7 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useRunQuery, useTaskStream, useQueryHistory, useQueryDetail } from '../api/hooks.ts'
 import type { StreamEvent } from '../api/hooks.ts'
 import type { QueryResult, QueryEvidence, QueryCachedResponse } from '../api/client.ts'
@@ -91,6 +93,27 @@ function StatusBadge({ status }: { status: string }) {
           ? 'bg-purple-900/50 text-purple-400'
           : 'bg-blue-900/50 text-blue-400'
   return <span className={`text-[10px] px-1.5 py-0.5 rounded ${cls}`}>{status}</span>
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }, [text])
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="ml-auto text-xs text-gray-500 hover:text-gray-300 px-2 py-0.5 rounded border border-gray-700 hover:border-gray-600 transition-colors"
+      title="Copy as Markdown"
+    >
+      {copied ? 'Copied!' : 'Copy'}
+    </button>
+  )
 }
 
 export default function Query() {
@@ -280,9 +303,12 @@ export default function Query() {
                   cached
                 </span>
               )}
+              <CopyButton text={displayResult.answer} />
             </div>
-            <div className="text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">
-              {displayResult.answer}
+            <div className="markdown-answer">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {displayResult.answer}
+              </ReactMarkdown>
             </div>
             <EvidenceTrail evidence={displayResult.evidence} />
             {showCached && (
