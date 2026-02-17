@@ -2,6 +2,7 @@
 
 Some ideas:
  - need an interface to be able to see what is indexed, all these views showing whats in each store and how its being used by the query - showing traces of the queries and how they worked and what they retrieve, what was sent to LLMs, what was received
+- search code UI is kind of lame - it also resets the query input and results when you navigate around; it shoudl also hold search history and "recent files looked at"
 
 # Agent Loop Issues
 
