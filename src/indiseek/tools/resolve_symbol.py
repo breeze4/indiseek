@@ -11,7 +11,9 @@ logger = logging.getLogger(__name__)
 VALID_ACTIONS = ("definition", "references", "callers", "callees")
 
 
-def resolve_symbol(store: SqliteStore, symbol_name: str, action: str) -> str:
+def resolve_symbol(
+    store: SqliteStore, symbol_name: str, action: str, repo_id: int = 1
+) -> str:
     """Look up a symbol's definition, references, callers, or callees.
 
     Uses SCIP cross-reference data first, falls back to tree-sitter symbols table.
@@ -20,6 +22,7 @@ def resolve_symbol(store: SqliteStore, symbol_name: str, action: str) -> str:
         store: SQLite store with symbols and SCIP tables.
         symbol_name: Name of the symbol to look up.
         action: One of "definition", "references", "callers", "callees".
+        repo_id: Repository ID to scope results to.
 
     Returns:
         Formatted string with file:line locations.
@@ -28,19 +31,19 @@ def resolve_symbol(store: SqliteStore, symbol_name: str, action: str) -> str:
         return f"Invalid action '{action}'. Use one of: {', '.join(VALID_ACTIONS)}"
 
     if action == "definition":
-        return _resolve_definition(store, symbol_name)
+        return _resolve_definition(store, symbol_name, repo_id)
     elif action == "references":
-        return _resolve_references(store, symbol_name)
+        return _resolve_references(store, symbol_name, repo_id)
     elif action == "callers":
-        return _resolve_callers(store, symbol_name)
+        return _resolve_callers(store, symbol_name, repo_id)
     else:
-        return _resolve_callees(store, symbol_name)
+        return _resolve_callees(store, symbol_name, repo_id)
 
 
-def _resolve_definition(store: SqliteStore, symbol_name: str) -> str:
+def _resolve_definition(store: SqliteStore, symbol_name: str, repo_id: int = 1) -> str:
     """Find where a symbol is defined."""
     # Try SCIP first
-    scip_defs = store.get_definition(symbol_name)
+    scip_defs = store.get_definition(symbol_name, repo_id=repo_id)
     if scip_defs:
         logger.debug("resolve %s/definition: %d SCIP hit(s)", symbol_name, len(scip_defs))
         lines = [f"Definition of '{symbol_name}' (SCIP, {len(scip_defs)} result(s)):"]
@@ -49,7 +52,7 @@ def _resolve_definition(store: SqliteStore, symbol_name: str) -> str:
         return "\n".join(lines)
 
     # Fall back to tree-sitter symbols
-    ts_syms = store.get_symbols_by_name(symbol_name)
+    ts_syms = store.get_symbols_by_name(symbol_name, repo_id=repo_id)
     if ts_syms:
         logger.debug("resolve %s/definition: %d tree-sitter hit(s) (SCIP miss)", symbol_name, len(ts_syms))
         lines = [f"Definition of '{symbol_name}' (tree-sitter, {len(ts_syms)} result(s)):"]
@@ -61,10 +64,10 @@ def _resolve_definition(store: SqliteStore, symbol_name: str) -> str:
     return f"No definition found for '{symbol_name}'."
 
 
-def _resolve_references(store: SqliteStore, symbol_name: str) -> str:
+def _resolve_references(store: SqliteStore, symbol_name: str, repo_id: int = 1) -> str:
     """Find all references to a symbol."""
     # Try SCIP first
-    scip_refs = store.get_references(symbol_name)
+    scip_refs = store.get_references(symbol_name, repo_id=repo_id)
     if scip_refs:
         logger.debug("resolve %s/references: %d SCIP hit(s)", symbol_name, len(scip_refs))
         lines = [f"References to '{symbol_name}' (SCIP, {len(scip_refs)} result(s)):"]
@@ -73,7 +76,7 @@ def _resolve_references(store: SqliteStore, symbol_name: str) -> str:
         return "\n".join(lines)
 
     # Fall back to tree-sitter symbols (less precise — just shows where the name is declared)
-    ts_syms = store.get_symbols_by_name(symbol_name)
+    ts_syms = store.get_symbols_by_name(symbol_name, repo_id=repo_id)
     if ts_syms:
         lines = [f"Symbols named '{symbol_name}' (tree-sitter, no cross-ref data):"]
         for s in ts_syms:
@@ -83,13 +86,13 @@ def _resolve_references(store: SqliteStore, symbol_name: str) -> str:
     return f"No references found for '{symbol_name}'."
 
 
-def _resolve_callers(store: SqliteStore, symbol_name: str) -> str:
+def _resolve_callers(store: SqliteStore, symbol_name: str, repo_id: int = 1) -> str:
     """Find symbols that call/reference the target within their definition range.
 
     Strategy: find the SCIP symbol matching the name, get all reference occurrences,
     then for each reference location, find which tree-sitter symbol contains that location.
     """
-    scip_refs = store.get_references(symbol_name)
+    scip_refs = store.get_references(symbol_name, repo_id=repo_id)
     if not scip_refs:
         logger.debug("resolve %s/callers: no SCIP references", symbol_name)
         return f"No callers found for '{symbol_name}' (no SCIP reference data)."
@@ -101,7 +104,7 @@ def _resolve_callers(store: SqliteStore, symbol_name: str) -> str:
         file_path = ref["file_path"]
         ref_line = ref["start_line"]
         # Find the tree-sitter symbol that contains this reference
-        file_syms = store.get_symbols_by_file(file_path)
+        file_syms = store.get_symbols_by_file(file_path, repo_id=repo_id)
         for sym in file_syms:
             if sym["start_line"] <= ref_line <= sym["end_line"]:
                 key = f"{sym['name']}@{file_path}:{sym['start_line']}"
@@ -120,15 +123,15 @@ def _resolve_callers(store: SqliteStore, symbol_name: str) -> str:
     return f"No callers found for '{symbol_name}' (references exist but no enclosing symbols found)."
 
 
-def _resolve_callees(store: SqliteStore, symbol_name: str) -> str:
+def _resolve_callees(store: SqliteStore, symbol_name: str, repo_id: int = 1) -> str:
     """Find symbols called/referenced within the target's definition range.
 
     Strategy: find the target's definition range, then find all SCIP references
     within that range that point to other symbols.
     """
     # Find the definition location
-    scip_defs = store.get_definition(symbol_name)
-    ts_syms = store.get_symbols_by_name(symbol_name)
+    scip_defs = store.get_definition(symbol_name, repo_id=repo_id)
+    ts_syms = store.get_symbols_by_name(symbol_name, repo_id=repo_id)
 
     # Determine the definition range from tree-sitter (more reliable for ranges)
     def_ranges: list[tuple[str, int, int]] = []
@@ -157,7 +160,7 @@ def _resolve_callees(store: SqliteStore, symbol_name: str) -> str:
                WHERE so.file_path = ? AND so.role = 'reference'
                  AND so.start_line >= ? AND so.start_line <= ?
                  AND so.repo_id = ?""",
-            (file_path, start, end, 1),
+            (file_path, start, end, repo_id),
         )
         for row in cur.fetchall():
             scip_symbol = row[0]

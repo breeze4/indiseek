@@ -580,3 +580,32 @@ _Session duration: 4m 35s — 2026-02-17 15:16:55_
 - No new tests were added because all changes use backward-compatible defaults. The existing 299 tests validate that nothing broke.
 - The `Summarizer` class stores `repo_id` as an instance variable rather than threading it through individual method parameters — this is cleaner since a Summarizer instance always operates within a single repo context.
 - Dashboard endpoint callers (dashboard.py) continue to use implicit `repo_id=1` defaults. They'll be explicitly scoped in Phase 12.
+
+_Session duration: 7m 54s — 2026-02-17 15:24:49_
+
+---
+
+## Master Phase 11: Multi-Repo — Scoped Agent + Tools
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+**Commit**: `efd72b4`
+
+### Files Modified
+- `src/indiseek/agent/loop.py` — Added `repo_id: int = 1` parameter to `AgentLoop.__init__()` (stored as `self._repo_id`) and `create_agent_loop()`. Updated `_build_system_prompt()` to pass `repo_id` to `read_map()`. Updated `_execute_tool()` to pass `self._repo_id` to all store method calls: `read_map()`, `resolve_symbol()`, `get_file_content()`, `get_symbols_in_range()`. Updated `create_agent_loop()` to use `config.get_repo_path(repo_id)`, `config.get_lancedb_table_name(repo_id)`, and `config.get_tantivy_path(repo_id)` for per-repo storage backends.
+- `src/indiseek/tools/read_map.py` — Added `repo_id: int = 1` parameter to `read_map()`. All store calls now pass `repo_id`: `get_file_summaries()`, `get_directory_tree()`, `get_all_directory_paths_from_summaries()`, `get_directory_summaries()`.
+- `src/indiseek/tools/resolve_symbol.py` — Added `repo_id: int = 1` parameter to `resolve_symbol()` and all internal helpers: `_resolve_definition()`, `_resolve_references()`, `_resolve_callers()`, `_resolve_callees()`. All store calls now pass `repo_id`. Fixed the hardcoded `repo_id=1` in `_resolve_callees()` raw SQL query to use the passed `repo_id` parameter.
+
+### Test Results
+- 299/299 tests passing (no new tests — all existing tests pass because `repo_id` defaults to 1)
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **Default `repo_id=1`**: All new parameters default to 1, maintaining 100% backward compatibility. No callers needed changes.
+- **`create_agent_loop` repo-aware**: Uses `config.get_repo_path(repo_id)` instead of hardcoded `config.REPO_PATH`. Uses `config.get_lancedb_table_name(repo_id)` for VectorStore table name. Uses `config.get_tantivy_path(repo_id)` for Tantivy index path.
+- **`_resolve_callees` fix**: The raw SQL query in `_resolve_callees()` previously hardcoded `repo_id=1`. Now correctly passes the `repo_id` parameter through the function chain.
+- **`AgentLoop._repo_id`**: Stored as instance variable, threaded through to all tool executions in `_execute_tool()` and `_build_system_prompt()`.
+
+### Notes
+- No new tests were added because all changes use backward-compatible defaults. The existing 299 tests validate that nothing broke.
+- Dashboard callers (`dashboard.py`, `server.py`) continue to use `create_agent_loop()` without explicit `repo_id` — they'll be updated in Phase 12 when the Management API adds `repo_id` to endpoints.

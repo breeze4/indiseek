@@ -277,13 +277,13 @@ The agent loop and tools operate within a specific repo's context.
 
 **Implementation:**
 
-- [ ] **5.1** Update `create_agent_loop()` to accept `repo_id`. Look up repo's `local_path`. Construct repo-specific VectorStore and LexicalIndexer. `AgentLoop` stores `self._repo_id`.
-- [ ] **5.2** Update `AgentLoop._execute_tool()` to pass `repo_id` to all store methods: `read_map`, `resolve_symbol`, `get_symbols_in_range`, `get_file_content`.
-- [ ] **5.3** Update tool functions: `read_map(store, path=None, repo_id=1)`, `resolve_symbol(store, symbol_name, action, repo_id=1)`. `read_file` already takes `repo_path` as parameter.
+- [x] **5.1** Update `create_agent_loop()` to accept `repo_id`. Look up repo's `local_path`. Construct repo-specific VectorStore and LexicalIndexer. `AgentLoop` stores `self._repo_id`.
+- [x] **5.2** Update `AgentLoop._execute_tool()` to pass `repo_id` to all store methods: `read_map`, `resolve_symbol`, `get_symbols_in_range`, `get_file_content`.
+- [x] **5.3** Update tool functions: `read_map(store, path=None, repo_id=1)`, `resolve_symbol(store, symbol_name, action, repo_id=1)`. `read_file` already takes `repo_path` as parameter.
 
 **Verify:**
-- [ ] `pytest` passes
-- [ ] `ruff check src/` clean
+- [x] `pytest` passes
+- [x] `ruff check src/` clean
 
 ---
 

@@ -248,10 +248,12 @@ class AgentLoop:
         code_searcher: CodeSearcher,
         api_key: str | None = None,
         model: str | None = None,
+        repo_id: int = 1,
     ) -> None:
         self._store = store
         self._repo_path = repo_path
         self._searcher = code_searcher
+        self._repo_id = repo_id
         self._client = genai.Client(api_key=api_key or config.GEMINI_API_KEY)
         self._model = model or config.GEMINI_MODEL
         # Per-run caches and state (reset at start of each run())
@@ -262,7 +264,7 @@ class AgentLoop:
 
     def _build_system_prompt(self) -> str:
         """Build system prompt with the top-level repo map baked in."""
-        repo_map = read_map(self._store)
+        repo_map = read_map(self._store, repo_id=self._repo_id)
         return SYSTEM_PROMPT_TEMPLATE.format(
             repo_map=repo_map,
             max_iterations=MAX_ITERATIONS,
@@ -274,7 +276,7 @@ class AgentLoop:
         t0 = time.perf_counter()
 
         if name == "read_map":
-            result = read_map(self._store, path=args.get("path"))
+            result = read_map(self._store, path=args.get("path"), repo_id=self._repo_id)
         elif name == "search_code":
             query = strip_file_paths(args["query"])
             mode = args.get("mode", "hybrid")
@@ -296,7 +298,7 @@ class AgentLoop:
                 logger.debug("  resolve cache hit: %s/%s", symbol_name, action)
                 result = f"[Cache hit]\n{self._resolve_cache[cache_key]}"
             else:
-                result = resolve_symbol(self._store, symbol_name, action)
+                result = resolve_symbol(self._store, symbol_name, action, repo_id=self._repo_id)
                 self._resolve_cache[cache_key] = result
         elif name == "read_file":
             file_path = args["path"]
@@ -322,7 +324,7 @@ class AgentLoop:
                 result = format_file_content(content, file_path, start_line, end_line)
             else:
                 # Read from SQLite (source of truth)
-                content = self._store.get_file_content(file_path)
+                content = self._store.get_file_content(file_path, repo_id=self._repo_id)
                 if content is None:
                     result = f"Error: File '{file_path}' not found in index."
                     content = None
@@ -337,7 +339,7 @@ class AgentLoop:
                 s = start_line or 1
                 e = end_line or min(len(content.splitlines()), DEFAULT_LINE_CAP)
 
-                symbols = self._store.get_symbols_in_range(file_path, s, e)
+                symbols = self._store.get_symbols_in_range(file_path, s, e, repo_id=self._repo_id)
                 if symbols:
                     sym_lines = ["\nSymbols defined in this range:"]
                     for sym in symbols:
@@ -599,18 +601,20 @@ def create_agent_loop(
     repo_path: Path | None = None,
     api_key: str | None = None,
     model: str | None = None,
+    repo_id: int = 1,
 ) -> AgentLoop:
     """Create an AgentLoop with default configuration.
 
     Initializes all necessary backends (SQLite, LanceDB, Tantivy) from config.
+    Uses per-repo storage paths when repo_id is specified.
     """
     if store is None:
         store = SqliteStore(config.SQLITE_PATH)
         logger.info("SQLite store: %s", config.SQLITE_PATH)
 
     if repo_path is None:
-        repo_path = config.REPO_PATH
-    logger.info("Repo path: %s", repo_path)
+        repo_path = config.get_repo_path(repo_id)
+    logger.info("Repo path: %s (repo_id=%d)", repo_path, repo_id)
 
     # Set up code searcher with available backends
     vector_store = None
@@ -618,11 +622,12 @@ def create_agent_loop(
     lexical_indexer = None
 
     # Try to open LanceDB if it exists
+    lancedb_table = config.get_lancedb_table_name(repo_id)
     if config.LANCEDB_PATH.exists() and config.GEMINI_API_KEY:
         try:
             from indiseek.agent.provider import GeminiProvider
 
-            vs = VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS)
+            vs = VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS, table_name=lancedb_table)
             vs.init_table()
             count = vs.count()
             if count > 0:
@@ -633,9 +638,9 @@ def create_agent_loop(
                     return provider.embed([text])[0]
 
                 embed_fn = _embed
-                logger.info("Semantic search: enabled (%d vectors in LanceDB)", count)
+                logger.info("Semantic search: enabled (%d vectors in LanceDB, table=%s)", count, lancedb_table)
             else:
-                logger.info("Semantic search: disabled (LanceDB table empty)")
+                logger.info("Semantic search: disabled (LanceDB table %s empty)", lancedb_table)
         except Exception as e:
             logger.warning("Semantic search: disabled (%s)", e)
     else:
@@ -647,16 +652,17 @@ def create_agent_loop(
         logger.info("Semantic search: disabled (%s)", ", ".join(reasons))
 
     # Try to open Tantivy index if it exists
-    if config.TANTIVY_PATH.exists():
+    tantivy_path = config.get_tantivy_path(repo_id)
+    if tantivy_path.exists():
         try:
-            li = LexicalIndexer(store, config.TANTIVY_PATH)
+            li = LexicalIndexer(store, tantivy_path)
             li.open_index()
             lexical_indexer = li
-            logger.info("Lexical search: enabled (Tantivy at %s)", config.TANTIVY_PATH)
+            logger.info("Lexical search: enabled (Tantivy at %s)", tantivy_path)
         except Exception as e:
             logger.warning("Lexical search: disabled (%s)", e)
     else:
-        logger.info("Lexical search: disabled (Tantivy path missing)")
+        logger.info("Lexical search: disabled (Tantivy path missing at %s)", tantivy_path)
 
     searcher = CodeSearcher(
         vector_store=vector_store,
@@ -671,4 +677,5 @@ def create_agent_loop(
         code_searcher=searcher,
         api_key=api_key,
         model=model,
+        repo_id=repo_id,
     )

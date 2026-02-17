@@ -38,18 +38,19 @@ def _format_tree(
     return "\n".join(line for line in lines if line)
 
 
-def read_map(store: SqliteStore, path: str | None = None) -> str:
+def read_map(store: SqliteStore, path: str | None = None, repo_id: int = 1) -> str:
     """Return directory structure with file summaries.
 
     Args:
         store: SQLite store with file_summaries table.
         path: Optional subdirectory to scope results to.
+        repo_id: Repository ID to scope results to.
 
     Returns:
         Formatted tree string with file summaries.
     """
     if path:
-        summaries = store.get_file_summaries(directory=path)
+        summaries = store.get_file_summaries(directory=path, repo_id=repo_id)
         if not summaries:
             return f"No files found under '{path}'."
         # Build a scoped tree from the summaries
@@ -62,13 +63,13 @@ def read_map(store: SqliteStore, path: str | None = None) -> str:
             node[parts[-1]] = row["summary"]
         header = f"Directory: {path}\n\n"
     else:
-        tree = store.get_directory_tree()
+        tree = store.get_directory_tree(repo_id=repo_id)
         if not tree:
             return "No file summaries available. Run indexing with --summarize first."
         header = "Repository map:\n\n"
 
     # Fetch directory summaries for annotating directory lines
-    dir_paths = list(store.get_all_directory_paths_from_summaries())
-    dir_summaries = store.get_directory_summaries(dir_paths) if dir_paths else {}
+    dir_paths = list(store.get_all_directory_paths_from_summaries(repo_id=repo_id))
+    dir_summaries = store.get_directory_summaries(dir_paths, repo_id=repo_id) if dir_paths else {}
 
     return header + _format_tree(tree, dir_summaries=dir_summaries)
