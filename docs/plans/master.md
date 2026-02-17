@@ -255,17 +255,17 @@ Update all pipeline functions to accept `repo_id` and scope their storage operat
 
 **Implementation:**
 
-- [ ] **4.1** Update `run_treesitter()` to accept `repo_id`, pass to insert methods. Update callers.
-- [ ] **4.2** Update `run_scip()` to accept `repo_id`, pass through `ScipLoader`. Update callers.
-- [ ] **4.3** Update `Embedder.embed_all_chunks()` to accept `repo_id`, scope chunk query, use repo-specific VectorStore table. Update callers.
-- [ ] **4.4** Update `Summarizer.summarize_repo()` and `summarize_directories()` to accept `repo_id`. Update callers.
-- [ ] **4.5** Update `run_lexical()` to accept `repo_id`, use repo-specific Tantivy path. Update callers.
-- [ ] **4.6** Update `scripts/index.py` CLI: add `--repo` argument (id or name). Look up repo's `local_path`. Default to repo_id=1 when `REPO_PATH` set. On completion, write HEAD SHA to `repos.indexed_commit_sha`, update `last_indexed_at`.
-- [ ] **4.7** Add `src/indiseek/git_utils.py`: `get_head_sha()`, `fetch_remote()`, `pull_remote()`, `count_commits_between()`, `get_changed_files()`, `clone_repo()`. All raise clear exceptions on failure.
+- [x] **4.1** Update `run_treesitter()` to accept `repo_id`, pass to insert methods. Update callers.
+- [x] **4.2** Update `run_scip()` to accept `repo_id`, pass through `ScipLoader`. Update callers.
+- [x] **4.3** Update `Embedder.embed_all_chunks()` to accept `repo_id`, scope chunk query, use repo-specific VectorStore table. Update callers.
+- [x] **4.4** Update `Summarizer.summarize_repo()` and `summarize_directories()` to accept `repo_id`. Update callers.
+- [x] **4.5** Update `run_lexical()` to accept `repo_id`, use repo-specific Tantivy path. Update callers.
+- [x] **4.6** Update `scripts/index.py` CLI: add `--repo` argument (id or name). Look up repo's `local_path`. Default to repo_id=1 when `REPO_PATH` set. On completion, write HEAD SHA to `repos.indexed_commit_sha`, update `last_indexed_at`.
+- [x] **4.7** Add `src/indiseek/git_utils.py`: `get_head_sha()`, `fetch_remote()`, `pull_remote()`, `count_commits_between()`, `get_changed_files()`, `clone_repo()`. All raise clear exceptions on failure.
 
 **Verify:**
-- [ ] `pytest` passes
-- [ ] `ruff check src/` clean
+- [x] `pytest` passes
+- [x] `ruff check src/` clean
 
 ---
 

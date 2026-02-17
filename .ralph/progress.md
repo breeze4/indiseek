@@ -542,3 +542,41 @@ _Session duration: 9m 18s — 2026-02-17 15:12:20_
 ### Notes
 - This is a lightweight phase — no new tests were needed because the changes are purely additive (new parameters with backward-compatible defaults, new functions not yet called).
 - The `LexicalIndexer.build_index()` method queries `FROM chunks` without repo_id filtering. This will be addressed in Phase 10 when the pipeline becomes repo-scoped.
+
+_Session duration: 4m 35s — 2026-02-17 15:16:55_
+
+---
+
+## Master Phase 10: Multi-Repo — Scoped Indexing Pipeline
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+**Commit**: `ef726a2`
+
+### Files Created
+- `src/indiseek/git_utils.py` — Git utilities: `get_head_sha()`, `fetch_remote()`, `pull_remote()`, `count_commits_between()`, `get_changed_files()`, `clone_repo()`. All raise `GitError` on failure.
+
+### Files Modified
+- `src/indiseek/indexer/pipeline.py` — Added `repo_id: int = 1` parameter to `run_treesitter()`, `run_scip()`, `run_summarize_dirs()`, `run_lexical()`. All pass `repo_id` through to store methods and sub-components.
+- `src/indiseek/indexer/scip.py` — Added `repo_id: int = 1` to `ScipLoader.__init__()`. All `insert_scip_symbol()`, `insert_scip_occurrences()`, `insert_scip_relationship()` calls now pass `repo_id`.
+- `src/indiseek/indexer/embedder.py` — Added `repo_id: int = 1` to `embed_all_chunks()`. Raw SQL chunk query now includes `WHERE repo_id = ?` filter.
+- `src/indiseek/indexer/summarizer.py` — Added `repo_id: int = 1` to `Summarizer.__init__()`. All store calls (`insert_file_summary`, `get_file_summaries`, `get_all_file_paths_from_summaries`, `get_all_directory_paths_from_summaries`, `get_directory_summary`, `insert_directory_summary`) now pass `self._repo_id`.
+- `src/indiseek/indexer/lexical.py` — Added `repo_id: int = 1` to `LexicalIndexer.build_index()`. Raw SQL chunk query now includes `WHERE repo_id = ?` filter.
+- `scripts/index.py` — Added `--repo` CLI argument (name or numeric ID). Added `_resolve_repo()` to look up repo by name or ID from the `repos` table. Uses `config.get_tantivy_path()` and `config.get_lancedb_table_name()` for repo-specific storage. Passes `repo_id` to all pipeline functions. On completion, calls `_update_repo_metadata()` to write HEAD SHA to `repos.indexed_commit_sha` and update `last_indexed_at`.
+- `docs/plans/master.md` — Marked all Phase 10 items complete.
+
+### Test Results
+- 299/299 tests passing (no new tests — all existing tests pass because `repo_id` defaults to 1)
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **Default `repo_id=1`**: All new parameters default to 1, maintaining 100% backward compatibility. Dashboard callers don't need explicit changes (deferred to Phase 12).
+- **Repo resolution**: `scripts/index.py --repo` accepts either a numeric ID or repo name. Falls back to `config.REPO_PATH` with `repo_id=1` when `--repo` is not specified.
+- **Repo-specific storage**: `scripts/index.py` now uses `config.get_tantivy_path(repo_id)` and `config.get_lancedb_table_name(repo_id)` to select per-repo Tantivy directories and LanceDB tables.
+- **Head SHA tracking**: After successful indexing, `_update_repo_metadata()` reads HEAD SHA via `git_utils.get_head_sha()` and writes it to the `repos` table. Failures are silently ignored (repo might not have git or might not be in the `repos` table yet).
+- **git_utils.py**: All functions use a shared `_run_git()` helper that raises `GitError` with clear messages on failure.
+
+### Notes
+- No new tests were added because all changes use backward-compatible defaults. The existing 299 tests validate that nothing broke.
+- The `Summarizer` class stores `repo_id` as an instance variable rather than threading it through individual method parameters — this is cleaner since a Summarizer instance always operates within a single repo context.
+- Dashboard endpoint callers (dashboard.py) continue to use implicit `repo_id=1` defaults. They'll be explicitly scoped in Phase 12.

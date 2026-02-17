@@ -36,7 +36,7 @@ class LexicalIndexer:
         builder.add_integer_field("end_line", stored=True)
         return builder
 
-    def build_index(self) -> int:
+    def build_index(self, repo_id: int = 1) -> int:
         """Build the Tantivy index from chunks in SQLite.
 
         Recreates the index from scratch each time.
@@ -50,10 +50,11 @@ class LexicalIndexer:
         schema = self._build_schema().build()
         index = tantivy.Index(schema, path=str(self._index_path))
 
-        # Fetch all chunks from SQLite
+        # Fetch all chunks from SQLite for this repo
         cur = self._store._conn.execute(
             "SELECT id, file_path, symbol_name, chunk_type, start_line, end_line, content "
-            "FROM chunks"
+            "FROM chunks WHERE repo_id = ?",
+            (repo_id,),
         )
         rows = cur.fetchall()
 

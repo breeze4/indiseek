@@ -28,8 +28,9 @@ def _parse_range(r: list[int]) -> tuple[int, int, int, int]:
 class ScipLoader:
     """Loads a SCIP protobuf index file into SQLite storage."""
 
-    def __init__(self, store: SqliteStore) -> None:
+    def __init__(self, store: SqliteStore, repo_id: int = 1) -> None:
         self._store = store
+        self._repo_id = repo_id
 
     def load(self, scip_path: Path) -> dict[str, int]:
         """Load a SCIP index file into the database.
@@ -51,7 +52,7 @@ class ScipLoader:
                     continue
 
                 doc_text = "\n".join(sym_info.documentation) if sym_info.documentation else None
-                sym_id = self._store.insert_scip_symbol(sym_info.symbol, doc_text)
+                sym_id = self._store.insert_scip_symbol(sym_info.symbol, doc_text, repo_id=self._repo_id)
                 counts["symbols"] += 1
 
                 # Process relationships
@@ -59,7 +60,7 @@ class ScipLoader:
                     if not rel.symbol or rel.symbol.startswith("local "):
                         continue
 
-                    related_id = self._store.insert_scip_symbol(rel.symbol)
+                    related_id = self._store.insert_scip_symbol(rel.symbol, repo_id=self._repo_id)
 
                     rel_types = []
                     if rel.is_implementation:
@@ -72,7 +73,7 @@ class ScipLoader:
                         rel_types.append("definition")
 
                     for rel_type in rel_types:
-                        self._store.insert_scip_relationship(sym_id, related_id, rel_type)
+                        self._store.insert_scip_relationship(sym_id, related_id, rel_type, repo_id=self._repo_id)
                         counts["relationships"] += 1
 
             # Process occurrences
@@ -81,7 +82,7 @@ class ScipLoader:
                 if not occ.symbol or occ.symbol.startswith("local "):
                     continue
 
-                sym_id = self._store.insert_scip_symbol(occ.symbol)
+                sym_id = self._store.insert_scip_symbol(occ.symbol, repo_id=self._repo_id)
 
                 try:
                     start_line, start_col, end_line, end_col = _parse_range(list(occ.range))
@@ -92,7 +93,7 @@ class ScipLoader:
                 occ_batch.append((sym_id, file_path, start_line, start_col, end_line, end_col, role))
 
             if occ_batch:
-                self._store.insert_scip_occurrences(occ_batch)
+                self._store.insert_scip_occurrences(occ_batch, repo_id=self._repo_id)
                 counts["occurrences"] += len(occ_batch)
 
         return counts

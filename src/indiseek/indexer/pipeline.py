@@ -39,6 +39,7 @@ def run_treesitter(
     repo_path: Path,
     path_filter: str | None = None,
     on_progress: Callable[[dict], None] | None = None,
+    repo_id: int = 1,
 ) -> dict:
     """Parse .ts/.tsx files with tree-sitter and store symbols/chunks.
 
@@ -53,9 +54,9 @@ def run_treesitter(
             f for f in ts_files
             if str(f.relative_to(repo_path)).startswith(path_filter)
         ]
-        store.clear_index_data_for_prefix(path_filter)
+        store.clear_index_data_for_prefix(path_filter, repo_id=repo_id)
     else:
-        store.clear_index_data()
+        store.clear_index_data(repo_id=repo_id)
 
     total = len(ts_files)
     ts_parser = TypeScriptParser()
@@ -80,13 +81,13 @@ def run_treesitter(
             chunks = ts_parser.chunk_file(fpath, relative)
 
             if symbols:
-                store.insert_symbols(symbols)
+                store.insert_symbols(symbols, repo_id=repo_id)
             if chunks:
-                store.insert_chunks(chunks)
+                store.insert_chunks(chunks, repo_id=repo_id)
 
             # Store file content for self-contained reads
             content = fpath.read_text(encoding="utf-8", errors="replace")
-            store.insert_file_content(relative, content)
+            store.insert_file_content(relative, content, repo_id=repo_id)
 
             total_symbols += len(symbols)
             total_chunks += len(chunks)
@@ -108,6 +109,7 @@ def run_scip(
     store: SqliteStore,
     scip_path: Path,
     on_progress: Callable[[dict], None] | None = None,
+    repo_id: int = 1,
 ) -> dict:
     """Load a SCIP protobuf index into SQLite.
 
@@ -118,7 +120,7 @@ def run_scip(
     if on_progress:
         on_progress({"step": "scip", "status": "loading", "file": str(scip_path)})
 
-    loader = ScipLoader(store)
+    loader = ScipLoader(store, repo_id=repo_id)
     counts = loader.load(scip_path)
 
     if on_progress:
@@ -130,6 +132,7 @@ def run_scip(
 def run_summarize_dirs(
     store: SqliteStore,
     on_progress: Callable[[dict], None] | None = None,
+    repo_id: int = 1,
 ) -> dict:
     """Summarize directories bottom-up using child file/dir summaries.
 
@@ -140,7 +143,7 @@ def run_summarize_dirs(
     if on_progress:
         on_progress({"step": "summarize-dirs", "status": "starting"})
 
-    summarizer = Summarizer(store)
+    summarizer = Summarizer(store, repo_id=repo_id)
     n_summarized = summarizer.summarize_directories(on_progress=on_progress)
 
     if on_progress:
@@ -153,6 +156,7 @@ def run_lexical(
     store: SqliteStore,
     tantivy_path: Path,
     on_progress: Callable[[dict], None] | None = None,
+    repo_id: int = 1,
 ) -> dict:
     """Build the Tantivy BM25 lexical index from SQLite chunks.
 
@@ -164,7 +168,7 @@ def run_lexical(
         on_progress({"step": "lexical", "status": "building"})
 
     lexical_indexer = LexicalIndexer(store, tantivy_path)
-    n_indexed = lexical_indexer.build_index()
+    n_indexed = lexical_indexer.build_index(repo_id=repo_id)
 
     if on_progress:
         on_progress({"step": "lexical", "status": "done", "documents_indexed": n_indexed})

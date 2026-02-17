@@ -61,10 +61,12 @@ class Summarizer:
         store: SqliteStore,
         provider: GenerationProvider | None = None,
         delay: float = 0.5,
+        repo_id: int = 1,
     ) -> None:
         self._store = store
         self._provider = provider or GeminiProvider()
         self._delay = delay
+        self._repo_id = repo_id
 
     def summarize_file(self, file_path: str, content: str) -> str:
         """Summarize a single file's content.
@@ -150,7 +152,7 @@ class Summarizer:
                 continue
 
             consecutive_errors = 0
-            self._store.insert_file_summary(relative, summary, language, line_count)
+            self._store.insert_file_summary(relative, summary, language, line_count, repo_id=self._repo_id)
             summarized += 1
 
             if on_progress:
@@ -182,7 +184,7 @@ class Summarizer:
         Returns the number of directories summarized.
         """
         # Get all file summaries to determine which directories exist
-        all_summaries = self._store.get_file_summaries()
+        all_summaries = self._store.get_file_summaries(repo_id=self._repo_id)
         if not all_summaries:
             print("No file summaries found. Run file summarization first.")
             return 0
@@ -206,7 +208,7 @@ class Summarizer:
         all_dirs.add(".")
 
         # Skip directories already summarized (resume-safe)
-        existing = self._store.get_all_directory_paths_from_summaries()
+        existing = self._store.get_all_directory_paths_from_summaries(repo_id=self._repo_id)
         dirs_to_process = sorted(all_dirs - existing, key=lambda d: -d.count("/"))
 
         total = len(dirs_to_process)
@@ -221,7 +223,7 @@ class Summarizer:
         dir_summary_cache: dict[str, str] = {}
         # Load existing summaries into cache for parents that depend on them
         for dp in existing:
-            row = self._store.get_directory_summary(dp)
+            row = self._store.get_directory_summary(dp, repo_id=self._repo_id)
             if row:
                 dir_summary_cache[dp] = row["summary"]
 
@@ -274,7 +276,7 @@ class Summarizer:
                 continue
 
             consecutive_errors = 0
-            self._store.insert_directory_summary(dir_path, summary)
+            self._store.insert_directory_summary(dir_path, summary, repo_id=self._repo_id)
             dir_summary_cache[dir_path] = summary
             summarized += 1
 
@@ -295,7 +297,7 @@ class Summarizer:
 
     def _get_summarized_paths(self) -> set[str]:
         """Return file paths that already have summaries in SQLite."""
-        return self._store.get_all_file_paths_from_summaries()
+        return self._store.get_all_file_paths_from_summaries(repo_id=self._repo_id)
 
     def _get_source_files(self, repo_path: Path) -> list[Path]:
         """Get source files to summarize, respecting .gitignore via git ls-files."""

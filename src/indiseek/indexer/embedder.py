@@ -35,12 +35,14 @@ class Embedder:
         self,
         path_filter: str | None = None,
         on_progress: Callable[[dict], None] | None = None,
+        repo_id: int = 1,
     ) -> int:
         """Embed chunks from SQLite that aren't already in LanceDB.
 
         Args:
             path_filter: Optional file path prefix to restrict which chunks are embedded.
             on_progress: Optional callback for progress events.
+            repo_id: Repository ID to scope chunk queries.
 
         Returns the total number of chunks embedded.
         """
@@ -48,12 +50,14 @@ class Embedder:
         if path_filter:
             cur = self._store._conn.execute(
                 "SELECT id, file_path, symbol_name, chunk_type, content FROM chunks "
-                "WHERE file_path LIKE ?",
-                (path_filter + "%",),
+                "WHERE file_path LIKE ? AND repo_id = ?",
+                (path_filter + "%", repo_id),
             )
         else:
             cur = self._store._conn.execute(
-                "SELECT id, file_path, symbol_name, chunk_type, content FROM chunks"
+                "SELECT id, file_path, symbol_name, chunk_type, content FROM chunks "
+                "WHERE repo_id = ?",
+                (repo_id,),
             )
         all_chunks = cur.fetchall()
 
