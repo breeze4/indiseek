@@ -1,7 +1,8 @@
-import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ChevronRight, ChevronDown, Folder, FileText } from 'lucide-react'
 import { useTree } from '../api/hooks.ts'
+import { useExpandedPaths } from '../hooks/useExpandedPaths.ts'
+import { useScrollRestore } from '../hooks/useScrollRestore.ts'
 import type { TreeChild } from '../api/client.ts'
 
 function Badge({ ok, label }: { ok: boolean | number; label: string }) {
@@ -29,8 +30,15 @@ function DirStats({ child }: { child: TreeChild }) {
   )
 }
 
-function TreeNode({ child, parentPath }: { child: TreeChild; parentPath: string }) {
-  const [expanded, setExpanded] = useState(false)
+interface TreeNodeProps {
+  child: TreeChild
+  parentPath: string
+  isExpanded: boolean
+  expandedPaths: Set<string>
+  onToggle: (path: string) => void
+}
+
+function TreeNode({ child, parentPath, isExpanded, expandedPaths, onToggle }: TreeNodeProps) {
   const fullPath = parentPath ? `${parentPath}/${child.name}` : child.name
 
   if (child.type === 'file') {
@@ -53,24 +61,30 @@ function TreeNode({ child, parentPath }: { child: TreeChild; parentPath: string 
   return (
     <div>
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => onToggle(fullPath)}
         className="flex items-center gap-1 py-1 px-2 hover:bg-gray-800 rounded text-sm w-full text-left"
       >
-        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <Folder size={14} className="text-yellow-500" />
         <span className="text-gray-200">{child.name}/</span>
         <DirStats child={child} />
       </button>
-      {expanded && (
+      {isExpanded && (
         <div className="ml-4 border-l border-gray-800 pl-2">
-          <TreeLevel path={fullPath} />
+          <TreeLevel path={fullPath} expandedPaths={expandedPaths} onToggle={onToggle} />
         </div>
       )}
     </div>
   )
 }
 
-function TreeLevel({ path }: { path: string }) {
+interface TreeLevelProps {
+  path: string
+  expandedPaths: Set<string>
+  onToggle: (path: string) => void
+}
+
+function TreeLevel({ path, expandedPaths, onToggle }: TreeLevelProps) {
   const { data, isLoading, error } = useTree(path)
 
   if (isLoading) return <p className="text-gray-500 text-sm py-1 px-2">Loading...</p>
@@ -79,9 +93,19 @@ function TreeLevel({ path }: { path: string }) {
 
   return (
     <div>
-      {data.children.map((child) => (
-        <TreeNode key={child.name} child={child} parentPath={path} />
-      ))}
+      {data.children.map((child) => {
+        const fullPath = path ? `${path}/${child.name}` : child.name
+        return (
+          <TreeNode
+            key={child.name}
+            child={child}
+            parentPath={path}
+            isExpanded={expandedPaths.has(fullPath)}
+            expandedPaths={expandedPaths}
+            onToggle={onToggle}
+          />
+        )
+      })}
     </div>
   )
 }
@@ -89,6 +113,8 @@ function TreeLevel({ path }: { path: string }) {
 export default function FileTree() {
   const [searchParams] = useSearchParams()
   const startPath = searchParams.get('path') ?? ''
+  const { expandedPaths, togglePath } = useExpandedPaths()
+  useScrollRestore('files-tree')
 
   return (
     <div>
@@ -97,7 +123,7 @@ export default function FileTree() {
         P=Parsed S=Summarized E=Embedded. Click directories to expand, files to view details.
       </p>
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-3">
-        <TreeLevel path={startPath} />
+        <TreeLevel path={startPath} expandedPaths={expandedPaths} onToggle={togglePath} />
       </div>
     </div>
   )
