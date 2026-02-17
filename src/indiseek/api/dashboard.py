@@ -312,6 +312,10 @@ def search_code(
 # ── Indexing operations ──
 
 
+class QueryRequest(BaseModel):
+    prompt: str
+
+
 class RunRequest(BaseModel):
     path_filter: str | None = None
 
@@ -442,6 +446,34 @@ def run_lexical_op():
 
     task_id = _task_manager.submit("lexical", _run)
     return {"task_id": task_id, "name": "lexical", "status": "running"}
+
+
+@router.post("/run/query")
+def run_query_op(req: QueryRequest):
+    """Submit a natural language query to the agent loop in background."""
+    if _task_manager.has_running_task():
+        raise HTTPException(status_code=409, detail="A task is already running")
+
+    if not config.GEMINI_API_KEY:
+        raise HTTPException(status_code=400, detail="GEMINI_API_KEY not configured")
+
+    from indiseek.agent.loop import create_agent_loop
+
+    prompt = req.prompt
+
+    def _run():
+        agent = create_agent_loop()
+        result = agent.run(prompt, on_progress=_make_progress_callback(task_id))
+        return {
+            "answer": result.answer,
+            "evidence": [
+                {"tool": e.tool, "args": e.args, "summary": e.summary}
+                for e in result.evidence
+            ],
+        }
+
+    task_id = _task_manager.submit("query", _run)
+    return {"task_id": task_id, "name": "query", "status": "running"}
 
 
 # ── Task status ──

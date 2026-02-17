@@ -90,9 +90,18 @@ All under `/dashboard/api/`:
 - FastAPI serves `frontend/dist/` at `/dashboard` in production
 - `.gitignore` includes `frontend/node_modules/` and `frontend/dist/`
 
+### 6. Query (`/dashboard/query`)
+
+Natural language query interface for the agent loop. Users submit a question, see live progress as the agent calls tools, and get the final answer with an evidence trail.
+
+- **Input:** Textarea for the prompt, Submit button.
+- **Progress:** Live log of each tool call as it happens (tool name, args, summary), streamed via SSE using the existing TaskManager infrastructure.
+- **Answer:** Rendered in a styled div with `whitespace-pre-wrap` when the agent finishes.
+- **Evidence trail:** Collapsible section showing each tool call with its summary.
+- **States:** idle (input only), running (input disabled, progress visible, pulsing dot), complete (answer + evidence, input re-enabled).
+- **Backend:** `POST /dashboard/api/run/query` submits the prompt to `AgentLoop.run()` via TaskManager. Returns 409 if a task is already running, 400 if GEMINI_API_KEY is not set.
+
 ## What This Is NOT
 
 - Not a replacement for the CLI indexing pipeline
-- Not a way to trigger re-indexing or modify data
-- Not a query interface for the agent loop (that's `POST /query`)
 - Not authenticated or multi-user

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -366,7 +367,11 @@ class AgentLoop:
             
         return "\n[HINT: " + " ".join(hints) + "]"
 
-    def run(self, prompt: str) -> AgentResult:
+    def run(
+        self,
+        prompt: str,
+        on_progress: Callable[[dict], None] | None = None,
+    ) -> AgentResult:
         """Run the agent loop until a text answer is produced or max iterations reached."""
         logger.info("Agent run started: %r", prompt[:120])
         run_t0 = time.perf_counter()
@@ -542,6 +547,15 @@ class AgentLoop:
                         summary=result[:200] + "..." if len(result) > 200 else result,
                     )
                 )
+
+                if on_progress is not None:
+                    on_progress({
+                        "step": "query",
+                        "iteration": iteration + 1,
+                        "tool": call.name,
+                        "args": args,
+                        "summary": summary,
+                    })
 
                 fn_response_parts.append(
                     types.Part.from_function_response(

@@ -1,16 +1,18 @@
 import { Routes, Route, NavLink } from 'react-router-dom'
-import { Database, FolderTree, Search, Play } from 'lucide-react'
+import { Database, FolderTree, Search, Play, MessageSquare } from 'lucide-react'
 import Overview from './pages/Overview.tsx'
 import FileTree from './pages/FileTree.tsx'
 import FileDetail from './pages/FileDetail.tsx'
 import ChunkDetail from './pages/ChunkDetail.tsx'
 import SearchPage from './pages/Search.tsx'
 import Operations from './pages/Operations.tsx'
+import Query from './pages/Query.tsx'
 
 const navItems = [
   { to: '/', icon: Database, label: 'Overview' },
   { to: '/files', icon: FolderTree, label: 'Files' },
   { to: '/search', icon: Search, label: 'Search' },
+  { to: '/query', icon: MessageSquare, label: 'Query' },
   { to: '/operations', icon: Play, label: 'Operations' },
 ]
 
@@ -44,6 +46,7 @@ function App() {
           <Route path="/files/*" element={<FileDetail />} />
           <Route path="/chunks/:id" element={<ChunkDetail />} />
           <Route path="/search" element={<SearchPage />} />
+          <Route path="/query" element={<Query />} />
           <Route path="/operations" element={<Operations />} />
         </Routes>
       </main>

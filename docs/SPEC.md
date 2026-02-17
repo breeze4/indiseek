@@ -183,6 +183,4 @@ The loop:
 - No auth, no multi-user, no rate limiting
 - No caching of query results
 - No MCP server integration (just HTTP for now)
-- No UI (curl only)
-- No streaming responses
 - No persistent conversation/follow-up queries

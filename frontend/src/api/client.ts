@@ -104,6 +104,17 @@ export interface RunResponse {
   status: string
 }
 
+export interface QueryEvidence {
+  tool: string
+  args: Record<string, unknown>
+  summary: string
+}
+
+export interface QueryResult {
+  answer: string
+  evidence: QueryEvidence[]
+}
+
 // API functions
 
 export const fetchStats = () => apiFetch<Stats>('/stats')
@@ -129,6 +140,13 @@ export const runOperation = (name: string, body?: Record<string, unknown>) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body ?? {}),
+  })
+
+export const runQuery = (prompt: string) =>
+  apiFetch<RunResponse>('/run/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
   })
 
 export function createTaskStream(taskId: string): EventSource {

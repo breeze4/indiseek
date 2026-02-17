@@ -8,6 +8,7 @@ import {
   searchCode,
   fetchTasks,
   runOperation,
+  runQuery,
   createTaskStream,
   type TaskInfo,
 } from './client.ts'
@@ -57,6 +58,16 @@ export function useRunOperation() {
   return useMutation({
     mutationFn: ({ name, body }: { name: string; body?: Record<string, unknown> }) =>
       runOperation(name, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    },
+  })
+}
+
+export function useRunQuery() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (prompt: string) => runQuery(prompt),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
     },
