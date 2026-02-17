@@ -295,16 +295,16 @@ Add backend API endpoints for repo CRUD, freshness checks, sync, and scope all e
 
 **Implementation:**
 
-- [ ] **6.1** Add repo CRUD endpoints: `GET /repos`, `POST /repos` (triggers git clone via TaskManager), `GET /repos/{repo_id}`, `DELETE /repos/{repo_id}`.
-- [ ] **6.1b** Add freshness check: `POST /repos/{repo_id}/check` — runs `git fetch origin`, then `git rev-parse` on the default remote branch (detect origin/main vs origin/master) to get latest remote SHA. Compares to `repos.indexed_commit_sha`. Updates `repos.current_commit_sha` and `repos.commits_behind`. Returns `{indexed_sha, current_sha, commits_behind, changed_files}`. This is a fast synchronous operation (no TaskManager needed).
-- [ ] **6.1c** Add sync endpoint: `POST /repos/{repo_id}/sync` — runs via TaskManager with SSE progress streaming. Steps: (1) `git pull origin` to update clone, (2) `git diff --name-only {indexed_sha}..HEAD` to get changed files, (3) for changed/added files: re-run tree-sitter parse, re-embed chunks, re-summarize, (4) for deleted files: remove their rows from all tables (symbols, chunks, summaries, SCIP occurrences, file_contents), (5) rebuild lexical index (full rebuild — Tantivy doesn't support incremental well), (6) update `repos.indexed_commit_sha = HEAD`, `current_commit_sha = HEAD`, `commits_behind = 0`, `last_indexed_at = now`. If no changes detected, return immediately with "already up to date".
-- [ ] **6.2** Add `repo_id` to existing dashboard endpoints: `stats`, `tree`, `files`, `chunks`. Keep old un-scoped endpoints as aliases for repo_id=1.
-- [ ] **6.3** Add `repo_id` to search and query endpoints. Update top-level `POST /query` to accept optional `repo_id`, default 1.
-- [ ] **6.4** Add `repo_id` to indexing operation endpoints (`run/treesitter`, `run/scip`, `run/embed`, `run/summarize`, `run/lexical`). Keep old endpoints as aliases.
+- [x] **6.1** Add repo CRUD endpoints: `GET /repos`, `POST /repos` (triggers git clone via TaskManager), `GET /repos/{repo_id}`, `DELETE /repos/{repo_id}`.
+- [x] **6.1b** Add freshness check: `POST /repos/{repo_id}/check` — runs `git fetch origin`, then `git rev-parse` on the default remote branch (detect origin/main vs origin/master) to get latest remote SHA. Compares to `repos.indexed_commit_sha`. Updates `repos.current_commit_sha` and `repos.commits_behind`. Returns `{indexed_sha, current_sha, commits_behind, changed_files}`. This is a fast synchronous operation (no TaskManager needed).
+- [x] **6.1c** Add sync endpoint: `POST /repos/{repo_id}/sync` — runs via TaskManager with SSE progress streaming. Steps: (1) `git pull origin` to update clone, (2) `git diff --name-only {indexed_sha}..HEAD` to get changed files, (3) for changed/added files: re-run tree-sitter parse, re-embed chunks, re-summarize, (4) for deleted files: remove their rows from all tables (symbols, chunks, summaries, SCIP occurrences, file_contents), (5) rebuild lexical index (full rebuild — Tantivy doesn't support incremental well), (6) update `repos.indexed_commit_sha = HEAD`, `current_commit_sha = HEAD`, `commits_behind = 0`, `last_indexed_at = now`. If no changes detected, return immediately with "already up to date".
+- [x] **6.2** Add `repo_id` to existing dashboard endpoints: `stats`, `tree`, `files`, `chunks`. Keep old un-scoped endpoints as aliases for repo_id=1.
+- [x] **6.3** Add `repo_id` to search and query endpoints. Update top-level `POST /query` to accept optional `repo_id`, default 1.
+- [x] **6.4** Add `repo_id` to indexing operation endpoints (`run/treesitter`, `run/scip`, `run/embed`, `run/summarize`, `run/lexical`). Keep old endpoints as aliases.
 
 **Verify:**
-- [ ] `pytest` passes
-- [ ] `ruff check src/` clean
+- [x] `pytest` passes
+- [x] `ruff check src/` clean
 
 ---
 

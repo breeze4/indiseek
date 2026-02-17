@@ -37,22 +37,22 @@ app.add_middleware(
 # Dashboard API
 app.include_router(dashboard_router, prefix="/dashboard/api")
 
-# Lazy-initialized agent loop (created on first request or startup)
-_agent_loop = None
+# Lazy-initialized agent loops, keyed by repo_id
+_agent_loops: dict[int, object] = {}
 
 
-def _get_agent_loop():
-    global _agent_loop
-    if _agent_loop is None:
-        logger.info("Initializing agent loop...")
+def _get_agent_loop(repo_id: int = 1):
+    if repo_id not in _agent_loops:
+        logger.info("Initializing agent loop for repo_id=%d...", repo_id)
         t0 = time.perf_counter()
-        _agent_loop = create_agent_loop()
+        _agent_loops[repo_id] = create_agent_loop(repo_id=repo_id)
         logger.info("Agent loop ready (%.2fs)", time.perf_counter() - t0)
-    return _agent_loop
+    return _agent_loops[repo_id]
 
 
 class QueryRequest(BaseModel):
     prompt: str
+    repo_id: int = 1
 
 
 class EvidenceStepResponse(BaseModel):
@@ -75,7 +75,7 @@ def query(req: QueryRequest):
     logger.info("POST /query prompt=%r", req.prompt[:120])
     t0 = time.perf_counter()
     try:
-        agent = _get_agent_loop()
+        agent = _get_agent_loop(repo_id=req.repo_id)
         result: AgentResult = agent.run(req.prompt)
         elapsed = time.perf_counter() - t0
         logger.info(

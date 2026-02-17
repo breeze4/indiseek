@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from indiseek import config
 from indiseek.api.task_manager import TaskManager
+from indiseek.git_utils import GitError
 
 logger = logging.getLogger(__name__)
 
@@ -34,29 +35,286 @@ def _get_sqlite_store():
     return store
 
 
-def _get_vector_store():
+def _get_vector_store(repo_id: int = 1):
     from indiseek.storage.vector_store import VectorStore
     try:
-        return VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS)
+        table_name = config.get_lancedb_table_name(repo_id)
+        return VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS, table_name=table_name)
     except Exception:
         return None
 
 
-def _get_lexical_indexer(store):
+def _get_lexical_indexer(store, repo_id: int = 1):
     from indiseek.indexer.lexical import LexicalIndexer
     try:
-        indexer = LexicalIndexer(store, config.TANTIVY_PATH)
+        tantivy_path = config.get_tantivy_path(repo_id)
+        indexer = LexicalIndexer(store, tantivy_path)
         indexer.open_index()
         return indexer
     except Exception:
         return None
 
 
+# ── Repos ──
+
+
+class CreateRepoRequest(BaseModel):
+    name: str
+    url: str
+    shallow: bool = True
+
+
+@router.get("/repos")
+def list_repos():
+    """List all repositories."""
+    store = _get_sqlite_store()
+    if not store:
+        return []
+    return store.list_repos()
+
+
+@router.post("/repos")
+def create_repo(req: CreateRepoRequest):
+    """Add a new repository by cloning from URL."""
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=503, detail="SQLite store not available")
+
+    # Check for duplicate name
+    if store.get_repo_by_name(req.name):
+        raise HTTPException(status_code=409, detail=f"Repo '{req.name}' already exists")
+
+    if _task_manager.has_running_task():
+        raise HTTPException(status_code=409, detail="A task is already running")
+
+    from indiseek.git_utils import clone_repo
+    from indiseek.storage.sqlite_store import SqliteStore
+
+    def _run():
+        s = SqliteStore(config.SQLITE_PATH)
+        s.init_db()
+        repo_id = s.insert_repo(req.name, str(dest), url=req.url)
+        try:
+            clone_repo(req.url, dest, shallow=req.shallow)
+        except GitError as e:
+            s.delete_repo(repo_id)
+            raise RuntimeError(str(e)) from e
+        return {"repo_id": repo_id, "name": req.name, "local_path": str(dest)}
+
+    dest = config.REPOS_DIR / req.name
+    task_id = _task_manager.submit("clone", _run)
+    return {"task_id": task_id, "name": "clone", "status": "running"}
+
+
+@router.get("/repos/{repo_id}")
+def get_repo(repo_id: int):
+    """Get a single repository by ID."""
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=503, detail="SQLite store not available")
+    repo = store.get_repo(repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repo not found")
+    return repo
+
+
+@router.delete("/repos/{repo_id}")
+def delete_repo(repo_id: int):
+    """Delete a repository record."""
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=503, detail="SQLite store not available")
+    repo = store.get_repo(repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repo not found")
+    store.delete_repo(repo_id)
+    return {"deleted": True, "repo_id": repo_id}
+
+
+@router.post("/repos/{repo_id}/check")
+def check_repo_freshness(repo_id: int):
+    """Check how far behind the remote a repo is."""
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=503, detail="SQLite store not available")
+    repo = store.get_repo(repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repo not found")
+
+    from indiseek.git_utils import (
+        count_commits_between,
+        fetch_remote,
+        get_changed_files,
+        get_head_sha,
+    )
+
+    repo_path = Path(repo["local_path"])
+    if not repo_path.is_dir():
+        raise HTTPException(status_code=400, detail="Repo local path not found on disk")
+
+    try:
+        fetch_remote(repo_path)
+    except GitError as e:
+        raise HTTPException(status_code=500, detail=f"git fetch failed: {e}")
+
+    # Detect default remote branch (origin/main or origin/master)
+    try:
+        remote_sha = subprocess.run(
+            ["git", "rev-parse", "origin/main"],
+            capture_output=True, text=True, cwd=repo_path,
+        )
+        if remote_sha.returncode != 0:
+            remote_sha = subprocess.run(
+                ["git", "rev-parse", "origin/master"],
+                capture_output=True, text=True, cwd=repo_path, check=True,
+            )
+        current_sha = remote_sha.stdout.strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not determine remote HEAD: {e}")
+
+    indexed_sha = repo.get("indexed_commit_sha")
+    commits_behind = 0
+    changed_files: list[str] = []
+
+    if indexed_sha and indexed_sha != current_sha:
+        try:
+            commits_behind = count_commits_between(repo_path, indexed_sha, current_sha)
+            changed_files = get_changed_files(repo_path, indexed_sha, current_sha)
+        except GitError:
+            # If the indexed SHA doesn't exist (e.g. shallow clone), count is unknown
+            commits_behind = -1
+    elif not indexed_sha:
+        # Never indexed — get current HEAD
+        current_sha = get_head_sha(repo_path)
+
+    store.update_repo(
+        repo_id,
+        current_commit_sha=current_sha,
+        commits_behind=commits_behind,
+    )
+
+    return {
+        "indexed_sha": indexed_sha,
+        "current_sha": current_sha,
+        "commits_behind": commits_behind,
+        "changed_files": changed_files,
+    }
+
+
+@router.post("/repos/{repo_id}/sync")
+def sync_repo(repo_id: int):
+    """Pull latest changes and re-index changed files."""
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=503, detail="SQLite store not available")
+    repo = store.get_repo(repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repo not found")
+
+    if _task_manager.has_running_task():
+        raise HTTPException(status_code=409, detail="A task is already running")
+
+    from indiseek.storage.sqlite_store import SqliteStore
+
+    repo_path = Path(repo["local_path"])
+    indexed_sha = repo.get("indexed_commit_sha")
+
+    def _run():
+        from indiseek.git_utils import get_changed_files, get_head_sha, pull_remote
+        from indiseek.indexer.pipeline import run_lexical, run_treesitter
+
+        progress = _make_progress_callback(task_id)
+        s = SqliteStore(config.SQLITE_PATH)
+        s.init_db()
+
+        # Step 1: Pull
+        progress({"step": "sync", "status": "pulling"})
+        try:
+            pull_remote(repo_path)
+        except GitError as e:
+            raise RuntimeError(f"git pull failed: {e}") from e
+
+        new_sha = get_head_sha(repo_path)
+
+        # Check if there are actual changes
+        if indexed_sha and indexed_sha == new_sha:
+            s.update_repo(
+                repo_id,
+                current_commit_sha=new_sha,
+                commits_behind=0,
+            )
+            return {"status": "up_to_date", "sha": new_sha}
+
+        # Step 2: Get changed files
+        changed: list[str] = []
+        if indexed_sha:
+            try:
+                changed = get_changed_files(repo_path, indexed_sha, new_sha)
+            except GitError:
+                changed = []  # full re-index on failure
+
+        progress({"step": "sync", "status": "indexing", "changed_files": len(changed)})
+
+        # Step 3: Re-index changed files (or full if no indexed_sha)
+        if changed:
+            # Delete old data for changed files and re-parse them
+            for fp in changed:
+                s.clear_index_data_for_prefix(fp, repo_id=repo_id)
+            # Re-run tree-sitter on the changed files
+            from indiseek.indexer.parser import TypeScriptParser
+            ts_parser = TypeScriptParser()
+            for fp in changed:
+                fpath = repo_path / fp
+                if not fpath.exists() or fpath.suffix not in (".ts", ".tsx"):
+                    continue
+                try:
+                    symbols = ts_parser.parse_file(fpath, fp)
+                    chunks = ts_parser.chunk_file(fpath, fp)
+                    if symbols:
+                        s.insert_symbols(symbols, repo_id=repo_id)
+                    if chunks:
+                        s.insert_chunks(chunks, repo_id=repo_id)
+                    content = fpath.read_text(encoding="utf-8", errors="replace")
+                    s.insert_file_content(fp, content, repo_id=repo_id)
+                except Exception as e:
+                    logger.warning("Failed to re-parse %s: %s", fp, e)
+
+            # Delete rows for deleted files
+            for fp in changed:
+                fpath = repo_path / fp
+                if not fpath.exists():
+                    s.clear_index_data_for_prefix(fp, repo_id=repo_id)
+        else:
+            # Full re-index
+            run_treesitter(s, repo_path, on_progress=progress, repo_id=repo_id)
+
+        # Step 4: Rebuild lexical index (always full rebuild)
+        progress({"step": "sync", "status": "lexical"})
+        tantivy_path = config.get_tantivy_path(repo_id)
+        run_lexical(s, tantivy_path, on_progress=progress, repo_id=repo_id)
+
+        # Step 5: Update repo metadata
+        now = datetime.now(timezone.utc).isoformat()
+        s.update_repo(
+            repo_id,
+            indexed_commit_sha=new_sha,
+            current_commit_sha=new_sha,
+            commits_behind=0,
+            last_indexed_at=now,
+        )
+        s.set_metadata("last_index_at", now)
+
+        return {"status": "synced", "sha": new_sha, "changed_files": len(changed)}
+
+    task_id = _task_manager.submit("sync", _run)
+    return {"task_id": task_id, "name": "sync", "status": "running"}
+
+
 # ── Stats ──
 
 
 @router.get("/stats")
-def get_stats():
+def get_stats(repo_id: int = Query(1)):
     """Pipeline coverage statistics across all three stores."""
     result: dict[str, Any] = {
         "sqlite": {"available": False},
@@ -69,18 +327,18 @@ def get_stats():
         try:
             result["sqlite"] = {
                 "available": True,
-                "files_parsed": len(store.get_all_file_paths_from_chunks()),
-                "chunks": store.count("chunks"),
-                "symbols": store.count("symbols"),
-                "scip_symbols": store.count("scip_symbols"),
-                "scip_occurrences": store.count("scip_occurrences"),
-                "file_summaries": store.count("file_summaries"),
+                "files_parsed": len(store.get_all_file_paths_from_chunks(repo_id=repo_id)),
+                "chunks": store.count("chunks", repo_id=repo_id),
+                "symbols": store.count("symbols", repo_id=repo_id),
+                "scip_symbols": store.count("scip_symbols", repo_id=repo_id),
+                "scip_occurrences": store.count("scip_occurrences", repo_id=repo_id),
+                "file_summaries": store.count("file_summaries", repo_id=repo_id),
             }
         except Exception as e:
             logger.warning("Error reading SQLite stats: %s", e)
             result["sqlite"] = {"available": True, "error": str(e)}
 
-    vs = _get_vector_store()
+    vs = _get_vector_store(repo_id=repo_id)
     if vs:
         try:
             result["lancedb"] = {
@@ -91,7 +349,7 @@ def get_stats():
             result["lancedb"] = {"available": True, "embedded_chunks": 0}
 
     if store:
-        lexical = _get_lexical_indexer(store)
+        lexical = _get_lexical_indexer(store, repo_id=repo_id)
         if lexical:
             try:
                 result["tantivy"] = {
@@ -108,15 +366,15 @@ def get_stats():
 
 
 @router.get("/tree")
-def get_tree(path: str = ""):
+def get_tree(path: str = "", repo_id: int = Query(1)):
     """One level of directory tree with coverage counts."""
     store = _get_sqlite_store()
     if not store:
         raise HTTPException(status_code=503, detail="SQLite store not available")
 
-    repo_path = config.REPO_PATH
+    repo_path = config.get_repo_path(repo_id)
     if not repo_path or not repo_path.is_dir():
-        raise HTTPException(status_code=503, detail="REPO_PATH not configured")
+        raise HTTPException(status_code=503, detail="Repo path not configured or missing")
 
     # Get all git-tracked files
     try:
@@ -129,10 +387,10 @@ def get_tree(path: str = ""):
         all_files = []
 
     # Get coverage data
-    chunked_files = store.get_all_file_paths_from_chunks()
-    summarized_files = store.get_all_file_paths_from_summaries()
+    chunked_files = store.get_all_file_paths_from_chunks(repo_id=repo_id)
+    summarized_files = store.get_all_file_paths_from_summaries(repo_id=repo_id)
 
-    vs = _get_vector_store()
+    vs = _get_vector_store(repo_id=repo_id)
     embedded_files: set[str] = set()
     if vs:
         try:
@@ -195,13 +453,13 @@ def get_tree(path: str = ""):
     file_summary_map: dict[str, str] = {}
     if file_children:
         for fp in file_children:
-            row = store.get_file_summary(fp)
+            row = store.get_file_summary(fp, repo_id=repo_id)
             if row:
                 file_summary_map[fp] = row["summary"]
 
     dir_summary_map: dict[str, str] = {}
     if dir_children:
-        dir_summary_map = store.get_directory_summaries(dir_children)
+        dir_summary_map = store.get_directory_summaries(dir_children, repo_id=repo_id)
 
     # Attach summaries to children
     for child in children.values():
@@ -221,18 +479,18 @@ def get_tree(path: str = ""):
 
 
 @router.get("/files/{file_path:path}")
-def get_file_detail(file_path: str):
+def get_file_detail(file_path: str, repo_id: int = Query(1)):
     """File summary, chunks, and per-chunk pipeline status."""
     store = _get_sqlite_store()
     if not store:
         raise HTTPException(status_code=503, detail="SQLite store not available")
 
-    summary = store.get_file_summary(file_path)
-    chunks = store.get_chunks_by_file(file_path)
-    symbols = store.get_symbols_by_file(file_path)
+    summary = store.get_file_summary(file_path, repo_id=repo_id)
+    chunks = store.get_chunks_by_file(file_path, repo_id=repo_id)
+    symbols = store.get_symbols_by_file(file_path, repo_id=repo_id)
 
     # Check which chunks are embedded
-    vs = _get_vector_store()
+    vs = _get_vector_store(repo_id=repo_id)
     embedded_ids: set[int] = set()
     if vs:
         try:
@@ -259,17 +517,17 @@ def get_file_detail(file_path: str):
 
 
 @router.get("/chunks/{chunk_id}")
-def get_chunk_detail(chunk_id: int):
+def get_chunk_detail(chunk_id: int, repo_id: int = Query(1)):
     """Full chunk data with pipeline status."""
     store = _get_sqlite_store()
     if not store:
         raise HTTPException(status_code=503, detail="SQLite store not available")
 
-    chunk = store.get_chunk_by_id(chunk_id)
+    chunk = store.get_chunk_by_id(chunk_id, repo_id=repo_id)
     if not chunk:
         raise HTTPException(status_code=404, detail="Chunk not found")
 
-    vs = _get_vector_store()
+    vs = _get_vector_store(repo_id=repo_id)
     embedded = False
     if vs:
         try:
@@ -294,6 +552,7 @@ def search_code(
     q: str = Query(...),
     mode: str = Query("hybrid"),
     limit: int = Query(10),
+    repo_id: int = Query(1),
 ):
     """Search code chunks via semantic, lexical, or hybrid modes."""
     store = _get_sqlite_store()
@@ -302,7 +561,7 @@ def search_code(
 
     from indiseek.tools.search_code import CodeSearcher
 
-    lexical = _get_lexical_indexer(store)
+    lexical = _get_lexical_indexer(store, repo_id=repo_id)
 
     embed_fn = None
     if mode in ("semantic", "hybrid") and config.GEMINI_API_KEY:
@@ -343,14 +602,17 @@ def search_code(
 class QueryRequest(BaseModel):
     prompt: str
     force: bool = False
+    repo_id: int = 1
 
 
 class RunRequest(BaseModel):
     path_filter: str | None = None
+    repo_id: int = 1
 
 
 class RunScipRequest(BaseModel):
     scip_path: str | None = None
+    repo_id: int = 1
 
 
 def _make_progress_callback(task_id: str):
@@ -369,12 +631,15 @@ def run_treesitter_op(req: RunRequest = RunRequest()):
     from indiseek.indexer.pipeline import run_treesitter
     from indiseek.storage.sqlite_store import SqliteStore
 
+    repo_path = config.get_repo_path(req.repo_id)
+
     def _run(path_filter=None):
         store = SqliteStore(config.SQLITE_PATH)
         store.init_db()
         result = run_treesitter(
-            store, config.REPO_PATH, path_filter=path_filter,
+            store, repo_path, path_filter=path_filter,
             on_progress=_make_progress_callback(task_id),
+            repo_id=req.repo_id,
         )
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
         return result
@@ -392,7 +657,8 @@ def run_scip_op(req: RunScipRequest = RunScipRequest()):
     from indiseek.indexer.pipeline import run_scip
     from indiseek.storage.sqlite_store import SqliteStore
 
-    scip_path = Path(req.scip_path) if req.scip_path else config.REPO_PATH / "index.scip"
+    repo_path = config.get_repo_path(req.repo_id)
+    scip_path = Path(req.scip_path) if req.scip_path else repo_path / "index.scip"
 
     def _run():
         store = SqliteStore(config.SQLITE_PATH)
@@ -400,6 +666,7 @@ def run_scip_op(req: RunScipRequest = RunScipRequest()):
         result = run_scip(
             store, scip_path,
             on_progress=_make_progress_callback(task_id),
+            repo_id=req.repo_id,
         )
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
         return result
@@ -421,14 +688,17 @@ def run_embed_op(req: RunRequest = RunRequest()):
     from indiseek.storage.sqlite_store import SqliteStore
     from indiseek.storage.vector_store import VectorStore
 
+    table_name = config.get_lancedb_table_name(req.repo_id)
+
     def _run(path_filter=None):
         store = SqliteStore(config.SQLITE_PATH)
         store.init_db()
-        vs = VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS)
+        vs = VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS, table_name=table_name)
         embedder = Embedder(store, vs)
         result = {"embedded": embedder.embed_all_chunks(
             path_filter=path_filter,
             on_progress=_make_progress_callback(task_id),
+            repo_id=req.repo_id,
         )}
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
         return result
@@ -449,12 +719,14 @@ def run_summarize_op(req: RunRequest = RunRequest()):
     from indiseek.indexer.summarizer import Summarizer
     from indiseek.storage.sqlite_store import SqliteStore
 
+    repo_path = config.get_repo_path(req.repo_id)
+
     def _run(path_filter=None):
         store = SqliteStore(config.SQLITE_PATH)
         store.init_db()
-        summarizer = Summarizer(store)
+        summarizer = Summarizer(store, repo_id=req.repo_id)
         result = {"summarized": summarizer.summarize_repo(
-            config.REPO_PATH, path_filter=path_filter,
+            repo_path, path_filter=path_filter,
             on_progress=_make_progress_callback(task_id),
         )}
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
@@ -465,7 +737,7 @@ def run_summarize_op(req: RunRequest = RunRequest()):
 
 
 @router.post("/run/summarize-dirs")
-def run_summarize_dirs_op():
+def run_summarize_dirs_op(req: RunRequest = RunRequest()):
     """Trigger directory summarization in background."""
     if _task_manager.has_running_task():
         raise HTTPException(status_code=409, detail="A task is already running")
@@ -482,6 +754,7 @@ def run_summarize_dirs_op():
         result = run_summarize_dirs(
             store,
             on_progress=_make_progress_callback(task_id),
+            repo_id=req.repo_id,
         )
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
         return result
@@ -491,7 +764,7 @@ def run_summarize_dirs_op():
 
 
 @router.post("/run/lexical")
-def run_lexical_op():
+def run_lexical_op(req: RunRequest = RunRequest()):
     """Trigger lexical index build in background."""
     if _task_manager.has_running_task():
         raise HTTPException(status_code=409, detail="A task is already running")
@@ -499,12 +772,15 @@ def run_lexical_op():
     from indiseek.indexer.pipeline import run_lexical
     from indiseek.storage.sqlite_store import SqliteStore
 
+    tantivy_path = config.get_tantivy_path(req.repo_id)
+
     def _run():
         store = SqliteStore(config.SQLITE_PATH)
         store.init_db()
         result = run_lexical(
-            store, config.TANTIVY_PATH,
+            store, tantivy_path,
             on_progress=_make_progress_callback(task_id),
+            repo_id=req.repo_id,
         )
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
         return result
@@ -530,7 +806,7 @@ def run_query_op(req: QueryRequest):
         from indiseek.tools.search_code import compute_query_similarity
 
         last_index_at = store.get_metadata("last_index_at")
-        candidates = store.get_completed_queries_since(last_index_at)
+        candidates = store.get_completed_queries_since(last_index_at, repo_id=req.repo_id)
         best_match = None
         best_sim = 0.0
         for cand in candidates:
@@ -544,6 +820,7 @@ def run_query_op(req: QueryRequest):
                 prompt, best_match["answer"] or "",
                 evidence_json, best_match["id"],
                 best_match["duration_secs"] or 0.0,
+                repo_id=req.repo_id,
             )
             try:
                 evidence = json.loads(evidence_json)
@@ -567,7 +844,7 @@ def run_query_op(req: QueryRequest):
     from indiseek.agent.loop import create_agent_loop
 
     # Persist query in SQLite
-    query_id = store.insert_query(prompt)
+    query_id = store.insert_query(prompt, repo_id=req.repo_id)
 
     def _run():
         import time
@@ -575,7 +852,7 @@ def run_query_op(req: QueryRequest):
         qstore.init_db()
         start = time.monotonic()
         try:
-            agent = create_agent_loop()
+            agent = create_agent_loop(repo_id=req.repo_id)
             result = agent.run(prompt, on_progress=_make_progress_callback(task_id))
             duration = time.monotonic() - start
             evidence = [
@@ -603,13 +880,13 @@ def run_query_op(req: QueryRequest):
 
 
 @router.get("/queries")
-def list_queries():
+def list_queries(repo_id: int = Query(1)):
     """List recent queries (without answer/evidence)."""
     store = _get_sqlite_store()
     if not store:
         return []
     try:
-        return store.list_queries()
+        return store.list_queries(repo_id=repo_id)
     except Exception:
         return []
 

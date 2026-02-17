@@ -609,3 +609,35 @@ _Session duration: 7m 54s — 2026-02-17 15:24:49_
 ### Notes
 - No new tests were added because all changes use backward-compatible defaults. The existing 299 tests validate that nothing broke.
 - Dashboard callers (`dashboard.py`, `server.py`) continue to use `create_agent_loop()` without explicit `repo_id` — they'll be updated in Phase 12 when the Management API adds `repo_id` to endpoints.
+
+_Session duration: 6m 9s — 2026-02-17 15:30:58_
+
+---
+
+## Master Phase 12: Multi-Repo — Management API
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+
+### Files Modified
+- `src/indiseek/api/dashboard.py` — Added repo CRUD endpoints (`GET /repos`, `POST /repos`, `GET /repos/{repo_id}`, `DELETE /repos/{repo_id}`), freshness check endpoint (`POST /repos/{repo_id}/check`), sync endpoint (`POST /repos/{repo_id}/sync`). Added `repo_id` query parameter to all existing dashboard endpoints: `stats`, `tree`, `files/{path}`, `chunks/{id}`, `search`, `queries`. Added `repo_id` field to `QueryRequest`, `RunRequest`, `RunScipRequest` Pydantic models. Updated all `/run/*` endpoints to use repo-specific paths via `config.get_repo_path()`, `config.get_tantivy_path()`, `config.get_lancedb_table_name()`. Updated `_get_vector_store()` and `_get_lexical_indexer()` helpers to accept `repo_id`.
+- `src/indiseek/api/server.py` — Added `repo_id: int = 1` to `QueryRequest` model. Changed `_agent_loop` singleton to `_agent_loops` dict keyed by `repo_id`. Updated `_get_agent_loop()` to accept `repo_id` and cache per-repo agent loops. Updated `/query` endpoint to pass `repo_id` through.
+
+### Files Created
+- `tests/test_dashboard.py` — 24 tests in 5 test classes: `TestReposCRUD` (8 tests for CRUD endpoints), `TestRepoScopedEndpoints` (7 tests for repo_id on existing endpoints), `TestFreshnessCheck` (2 tests), `TestSyncEndpoint` (2 tests), `TestIndexingOpsRepoId` (5 tests for repo_id on `/run/*` endpoints).
+
+### Test Results
+- 323/323 tests passing (299 existing + 24 new)
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **Repo CRUD**: `POST /repos` accepts `{name, url, shallow}`, clones via TaskManager background task. Validates duplicate names before submitting. On clone failure, the repo record is cleaned up.
+- **Freshness check**: Synchronous endpoint. Runs `git fetch origin`, then tries `git rev-parse origin/main` (falls back to `origin/master`) to detect the remote's HEAD SHA. Compares to `repos.indexed_commit_sha`, counts commits behind, lists changed files. Updates `repos.current_commit_sha` and `repos.commits_behind`.
+- **Sync endpoint**: Background task via TaskManager. Steps: (1) git pull, (2) diff changed files against indexed SHA, (3) for changed files: clear old data + re-parse with tree-sitter, (4) delete data for deleted files, (5) full lexical index rebuild, (6) update repo metadata. Returns "up_to_date" early if no changes.
+- **Backward-compatible**: All `repo_id` parameters default to 1. Existing un-scoped API calls continue to work identically. No breaking changes to API contract.
+- **Per-repo storage**: Dashboard helpers now use `config.get_lancedb_table_name(repo_id)` and `config.get_tantivy_path(repo_id)` instead of hardcoded paths.
+- **Server agent caching**: Changed from single `_agent_loop` to `_agent_loops` dict to support multiple repo contexts concurrently.
+
+### Notes
+- Tests use a `_make_store_factory` pattern to create per-request SQLite connections (thread-safe for FastAPI's TestClient which uses async event loops).
+- The sync endpoint does a simplified incremental index for changed files — it re-parses with tree-sitter and stores file contents, then does a full lexical index rebuild. Embedding and summarization of changed files are not included in sync (they can be run separately via the `/run/*` endpoints).
