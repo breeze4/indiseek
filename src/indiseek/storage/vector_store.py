@@ -22,11 +22,10 @@ class SearchResult:
 class VectorStore:
     """LanceDB vector store for code chunk embeddings."""
 
-    TABLE_NAME = "chunks"
-
-    def __init__(self, db_path: Path, dims: int = 768) -> None:
+    def __init__(self, db_path: Path, dims: int = 768, table_name: str = "chunks") -> None:
         self._db_path = db_path
         self._dims = dims
+        self._table_name = table_name
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db = lancedb.connect(str(db_path))
         self._table: lancedb.table.Table | None = None
@@ -46,20 +45,20 @@ class VectorStore:
     def init_table(self) -> None:
         """Create the chunks table if it doesn't exist, or open it."""
         existing = self._db.list_tables().tables
-        if self.TABLE_NAME in existing:
-            self._table = self._db.open_table(self.TABLE_NAME)
+        if self._table_name in existing:
+            self._table = self._db.open_table(self._table_name)
         else:
             self._table = self._db.create_table(
-                self.TABLE_NAME, schema=self._schema()
+                self._table_name, schema=self._schema()
             )
 
     def reset_table(self) -> None:
         """Drop and recreate the chunks table for a clean re-embed."""
         existing = self._db.list_tables().tables
-        if self.TABLE_NAME in existing:
-            self._db.drop_table(self.TABLE_NAME)
+        if self._table_name in existing:
+            self._db.drop_table(self._table_name)
         self._table = self._db.create_table(
-            self.TABLE_NAME, schema=self._schema()
+            self._table_name, schema=self._schema()
         )
 
     def get_chunk_ids(self) -> set[int]:

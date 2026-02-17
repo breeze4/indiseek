@@ -38,3 +38,36 @@ LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 SQLITE_PATH: Path = DATA_DIR / "indiseek.db"
 LANCEDB_PATH: Path = DATA_DIR / "lancedb"
 TANTIVY_PATH: Path = DATA_DIR / "tantivy"
+REPOS_DIR: Path = DATA_DIR / "repos"
+
+
+def get_repo_path(repo_id: int) -> Path:
+    """Return the local filesystem path for a repo's clone.
+
+    Legacy repo (id=1) uses REPO_PATH if set, otherwise falls back to REPOS_DIR/1.
+    """
+    if repo_id == 1 and REPO_PATH and REPO_PATH != Path(""):
+        return REPO_PATH
+    return REPOS_DIR / str(repo_id)
+
+
+def get_lancedb_table_name(repo_id: int) -> str:
+    """Return the LanceDB table name for a repo.
+
+    Legacy repo (id=1) uses the original "chunks" table name.
+    New repos use "chunks_{repo_id}".
+    """
+    if repo_id == 1:
+        return "chunks"
+    return f"chunks_{repo_id}"
+
+
+def get_tantivy_path(repo_id: int) -> Path:
+    """Return the Tantivy index directory for a repo.
+
+    Legacy repo (id=1) uses the original TANTIVY_PATH.
+    New repos use DATA_DIR/tantivy_{repo_id}/.
+    """
+    if repo_id == 1:
+        return TANTIVY_PATH
+    return DATA_DIR / f"tantivy_{repo_id}"

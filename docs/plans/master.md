@@ -237,13 +237,13 @@ Make LanceDB and Tantivy repo-aware with per-repo table names and index director
 
 **Implementation:**
 
-- [ ] **3.1** Make `VectorStore` repo-aware: change `TABLE_NAME` from class constant to instance variable, constructor accepts `table_name` parameter. Convention: `chunks_{repo_id}` for new repos. **Legacy handling:** existing `"chunks"` table has no `repo_id` column — leave it as-is for repo_id=1. New repos get `chunks_{id}`. If `table_name` is `"chunks"` and a legacy table exists, keep using it.
-- [ ] **3.2** Confirm `LexicalIndexer` is already repo-aware (constructor accepts `index_path`). Convention: callers pass `DATA_DIR/tantivy_{repo_id}/`.
-- [ ] **3.3** Add config helpers: `REPOS_DIR = DATA_DIR / "repos"`, helper functions `get_repo_path(repo_id)`, `get_lancedb_table_name(repo_id)`, `get_tantivy_path(repo_id)`. Legacy repo (id=1) uses `REPO_PATH` if set.
+- [x] **3.1** Make `VectorStore` repo-aware: change `TABLE_NAME` from class constant to instance variable, constructor accepts `table_name` parameter. Convention: `chunks_{repo_id}` for new repos. **Legacy handling:** existing `"chunks"` table has no `repo_id` column — leave it as-is for repo_id=1. New repos get `chunks_{id}`. If `table_name` is `"chunks"` and a legacy table exists, keep using it.
+- [x] **3.2** Confirm `LexicalIndexer` is already repo-aware (constructor accepts `index_path`). Convention: callers pass `DATA_DIR/tantivy_{repo_id}/`.
+- [x] **3.3** Add config helpers: `REPOS_DIR = DATA_DIR / "repos"`, helper functions `get_repo_path(repo_id)`, `get_lancedb_table_name(repo_id)`, `get_tantivy_path(repo_id)`. Legacy repo (id=1) uses `REPO_PATH` if set.
 
 **Verify:**
-- [ ] `pytest` passes
-- [ ] `ruff check src/` clean
+- [x] `pytest` passes
+- [x] `ruff check src/` clean
 
 ---
 

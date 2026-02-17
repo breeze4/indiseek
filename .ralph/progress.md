@@ -512,3 +512,33 @@ _Session duration: 5m 58s — 2026-02-17 15:03:02_
 ### Notes
 - The `Symbol` and `Chunk` dataclasses were NOT updated with `repo_id` fields as specified in the plan item 2.1. The `repo_id` is passed as a method parameter instead, which is cleaner — the dataclasses represent parsed data from files, while `repo_id` is a storage concern.
 - The `file_contents` table has `file_path TEXT PRIMARY KEY` (not a composite key with repo_id). INSERT OR REPLACE still works correctly for repo_id=1. Multi-repo file contents will need a schema migration to change the PK to `(file_path, repo_id)` — deferred to Phase 15 cleanup.
+
+_Session duration: 9m 18s — 2026-02-17 15:12:20_
+
+---
+
+## Master Phase 9: Multi-Repo — Per-Repo Storage Backends
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+**Commit**: `e540bd8`
+
+### Files Modified
+- `src/indiseek/storage/vector_store.py` — Changed `TABLE_NAME` from class constant to instance variable `_table_name`. Constructor now accepts `table_name` parameter (defaults to `"chunks"` for backward compatibility). All internal references updated from `self.TABLE_NAME` to `self._table_name`.
+- `src/indiseek/config.py` — Added `REPOS_DIR = DATA_DIR / "repos"` constant. Added three helper functions: `get_repo_path(repo_id)` (legacy repo uses REPO_PATH), `get_lancedb_table_name(repo_id)` (legacy uses "chunks", new repos use "chunks_{id}"), `get_tantivy_path(repo_id)` (legacy uses TANTIVY_PATH, new repos use DATA_DIR/tantivy_{id}/).
+
+### LexicalIndexer Confirmation
+- `LexicalIndexer` constructor already accepts `index_path: Path` as a parameter — callers control where the index lives. No changes needed. Convention for new repos: callers pass `get_tantivy_path(repo_id)`.
+
+### Test Results
+- 299/299 tests passing (no new tests — all existing tests pass because defaults match previous behavior)
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **VectorStore table_name**: Defaults to `"chunks"` so all existing code continues working. New repos will pass `table_name=get_lancedb_table_name(repo_id)` which returns `"chunks_{repo_id}"`. The legacy `"chunks"` table is untouched for repo_id=1.
+- **Config helpers**: All three helpers use the convention that repo_id=1 (legacy) uses the original paths/names, while repo_id>1 gets per-repo paths. `get_repo_path(1)` returns `REPO_PATH` if set, otherwise `REPOS_DIR/1`.
+- **Backward-compatible**: No callers changed — they continue using defaults. Callers will be updated in Phases 10-12 to use the config helpers.
+
+### Notes
+- This is a lightweight phase — no new tests were needed because the changes are purely additive (new parameters with backward-compatible defaults, new functions not yet called).
+- The `LexicalIndexer.build_index()` method queries `FROM chunks` without repo_id filtering. This will be addressed in Phase 10 when the pipeline becomes repo-scoped.
