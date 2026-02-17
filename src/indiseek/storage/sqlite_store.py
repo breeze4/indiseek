@@ -130,6 +130,12 @@ class SqliteStore:
                 source_query_id INTEGER
             );
 
+            CREATE TABLE IF NOT EXISTS file_contents (
+                file_path TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                line_count INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT
@@ -145,7 +151,7 @@ class SqliteStore:
             self._conn.commit()
 
     def clear_index_data(self) -> None:
-        """Delete all indexed data (symbols, chunks, SCIP) for a clean re-index."""
+        """Delete all indexed data (symbols, chunks, SCIP, file contents) for a clean re-index."""
         self._conn.executescript(
             """
             DELETE FROM scip_relationships;
@@ -153,6 +159,7 @@ class SqliteStore:
             DELETE FROM scip_symbols;
             DELETE FROM chunks;
             DELETE FROM symbols;
+            DELETE FROM file_contents;
             """
         )
         self._conn.commit()
@@ -376,6 +383,25 @@ class SqliteStore:
                 node = node.setdefault(part, {})
             node[parts[-1]] = row["summary"]
         return tree
+
+    # ── File contents operations ──
+
+    def insert_file_content(self, file_path: str, content: str) -> None:
+        """Insert or replace a file's full content."""
+        line_count = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+        self._conn.execute(
+            "INSERT OR REPLACE INTO file_contents (file_path, content, line_count) VALUES (?, ?, ?)",
+            (file_path, content, line_count),
+        )
+        self._conn.commit()
+
+    def get_file_content(self, file_path: str) -> str | None:
+        """Get a file's content by path, or None if not stored."""
+        cur = self._conn.execute(
+            "SELECT content FROM file_contents WHERE file_path = ?", (file_path,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
 
     # ── Dashboard query methods ──
 

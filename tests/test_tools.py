@@ -116,6 +116,38 @@ class TestSqliteStoreDashboardMethods:
         assert store.count("symbols") == 1
 
 
+# ── File contents storage tests ──
+
+
+class TestFileContents:
+    def test_insert_and_retrieve(self, store):
+        content = "function hello() {\n  console.log('hi');\n}\n"
+        store.insert_file_content("src/main.ts", content)
+        retrieved = store.get_file_content("src/main.ts")
+        assert retrieved == content
+
+    def test_missing_path_returns_none(self, store):
+        assert store.get_file_content("nonexistent.ts") is None
+
+    def test_line_count_computed(self, store):
+        content = "line1\nline2\nline3\n"
+        store.insert_file_content("src/a.ts", content)
+        cur = store._conn.execute(
+            "SELECT line_count FROM file_contents WHERE file_path = ?", ("src/a.ts",)
+        )
+        assert cur.fetchone()[0] == 3
+
+    def test_upsert_replaces(self, store):
+        store.insert_file_content("src/a.ts", "old content")
+        store.insert_file_content("src/a.ts", "new content")
+        assert store.get_file_content("src/a.ts") == "new content"
+
+    def test_clear_index_data_deletes_file_contents(self, store):
+        store.insert_file_content("src/a.ts", "content")
+        store.clear_index_data()
+        assert store.get_file_content("src/a.ts") is None
+
+
 # ── strip_file_paths tests ──
 
 

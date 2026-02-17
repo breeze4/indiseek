@@ -134,6 +134,7 @@ def main() -> None:
     print(f"  Files parsed: {ts_result['files_parsed']} ({ts_result['errors']} errors)")
     print(f"  Symbols extracted: {ts_result['symbols']}")
     print(f"  Chunks created: {ts_result['chunks']}")
+    print(f"  File contents stored: {ts_result['files_stored']}")
 
     # Step 2: SCIP cross-references
     if scip_path.exists():

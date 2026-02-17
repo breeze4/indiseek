@@ -288,3 +288,25 @@ _Session duration: 5m 56s — 2026-02-15 16:10:36_
 - The server uses a module-level `_agent_loop` singleton with lazy initialization
 
 _Session duration: 10m 3s — 2026-02-15 16:20:39_
+
+---
+
+## Master Phase 1: File Contents Storage Layer
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+
+### Files Modified
+- `src/indiseek/storage/sqlite_store.py` — added `file_contents` table in `init_db()`, `insert_file_content()`, `get_file_content()`, added DELETE to `clear_index_data()`
+- `src/indiseek/indexer/pipeline.py` — store file content during tree-sitter parse loop, added `files_stored` to return dict
+- `scripts/index.py` — print `files_stored` count in summary output
+- `tests/test_tools.py` — added 5 tests: round-trip insert/retrieve, missing path returns None, line_count computation, upsert replaces, clear_index_data deletes file_contents
+
+### Test Results
+- 231/231 tests passing
+- `ruff check src/` — all checks passed
+
+### Notes
+- File content storage is done in `pipeline.py`'s `run_treesitter()` rather than directly in `scripts/index.py`, since that's where the file read loop lives
+- `line_count` is computed from content: counts newlines, handling trailing newline correctly
+- Added 3 extra tests beyond the plan (upsert, line_count, clear_index_data) since they cover important behavior

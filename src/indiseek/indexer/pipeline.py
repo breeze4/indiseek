@@ -61,6 +61,7 @@ def run_treesitter(
     ts_parser = TypeScriptParser()
     total_symbols = 0
     total_chunks = 0
+    total_contents = 0
     errors = 0
 
     for i, fpath in enumerate(ts_files, 1):
@@ -83,8 +84,13 @@ def run_treesitter(
             if chunks:
                 store.insert_chunks(chunks)
 
+            # Store file content for self-contained reads
+            content = fpath.read_text(encoding="utf-8", errors="replace")
+            store.insert_file_content(relative, content)
+
             total_symbols += len(symbols)
             total_chunks += len(chunks)
+            total_contents += 1
         except Exception as e:
             errors += 1
             print(f"  Warning: Failed to parse {relative}: {e}", file=sys.stderr)
@@ -93,6 +99,7 @@ def run_treesitter(
         "files_parsed": total,
         "symbols": total_symbols,
         "chunks": total_chunks,
+        "files_stored": total_contents,
         "errors": errors,
     }
 
