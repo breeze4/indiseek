@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 
@@ -11,6 +12,98 @@ from indiseek.storage.vector_store import SearchResult as SemanticResult
 from indiseek.storage.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
+
+# Extensions recognized as file path tokens
+_FILE_EXTENSIONS = frozenset({
+    ".ts", ".tsx", ".js", ".jsx", ".json", ".md", ".py",
+    ".css", ".scss", ".less", ".html", ".yaml", ".yml",
+    ".vue", ".svelte", ".mjs", ".cjs",
+})
+
+# Matches path: or file: prefixed tokens
+_PREFIX_PATTERN = re.compile(r"\b(?:path|file):\S+", re.IGNORECASE)
+
+# Matches tokens containing / that end in a known extension
+_PATH_TOKEN_PATTERN = re.compile(
+    r"\b\S*/"  # must contain at least one slash
+    r"\S*\.(?:" + "|".join(ext.lstrip(".") for ext in _FILE_EXTENSIONS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def strip_file_paths(query: str) -> str:
+    """Remove file path patterns from a search query.
+
+    Strips:
+    - ``path:...`` and ``file:...`` prefixed tokens
+    - Tokens containing ``/`` that end in a known source file extension
+
+    Returns the original query if stripping would leave it empty.
+    """
+    cleaned = _PREFIX_PATTERN.sub("", query)
+    cleaned = _PATH_TOKEN_PATTERN.sub("", cleaned)
+    cleaned = " ".join(cleaned.split())  # collapse whitespace
+    if not cleaned:
+        return query.strip()
+    if cleaned != query.strip():
+        logger.info("strip_file_paths: %r -> %r", query, cleaned)
+    return cleaned
+
+
+def compute_query_similarity(a: str, b: str) -> float:
+    """Compute Jaccard similarity between two queries on normalized tokens.
+
+    Normalizes by:
+    1. Lowercasing
+    2. Stripping punctuation (except underscores)
+    3. Splitting by whitespace
+    """
+    def normalize(q: str) -> set[str]:
+        # Remove common punctuation that the model might vary (:, (, {, etc.)
+        # Keep underscores as they are often part of identifiers
+        q = re.sub(r"[^\w\s_]", " ", q.lower())
+        return set(q.split())
+
+    tokens_a = normalize(a)
+    tokens_b = normalize(b)
+
+    if not tokens_a or not tokens_b:
+        return 0.0
+
+    # For very short queries (1 token), require exact normalized match
+    if len(tokens_a) == 1 and len(tokens_b) == 1:
+        return 1.0 if tokens_a == tokens_b else 0.0
+
+    intersection = tokens_a & tokens_b
+    union = tokens_a | tokens_b
+    return len(intersection) / len(union)
+
+
+_SIMILARITY_THRESHOLD = 0.8
+
+
+class QueryCache:
+    """Cache for search queries that deduplicates similar lookups."""
+
+    def __init__(self, threshold: float = _SIMILARITY_THRESHOLD) -> None:
+        self._entries: list[tuple[str, str]] = []  # (query, result)
+        self._threshold = threshold
+
+    def get(self, query: str) -> str | None:
+        """Return cached result if a sufficiently similar query exists."""
+        for cached_query, cached_result in self._entries:
+            if compute_query_similarity(query, cached_query) >= self._threshold:
+                logger.info("query cache hit: %r ~ %r", query, cached_query)
+                return cached_result
+        return None
+
+    def put(self, query: str, result: str) -> None:
+        """Store a query and its result."""
+        self._entries.append((query, result))
+
+    def clear(self) -> None:
+        """Clear all cached entries."""
+        self._entries.clear()
 
 
 @dataclass
@@ -113,6 +206,14 @@ def format_results(results: list[HybridResult], query: str) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def summarize_results(results: list[HybridResult]) -> str:
+    """Return a one-line summary of search results for logging/tracing."""
+    if not results:
+        return "0 results"
+    top = results[0]
+    return f"{len(results)} results (top: {top.file_path} {top.symbol_name or top.chunk_type})"
 
 
 class CodeSearcher:

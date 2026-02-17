@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 from indiseek.agent.provider import GenerationProvider, GeminiProvider
 from indiseek.storage.sqlite_store import SqliteStore
@@ -23,13 +24,11 @@ SKIP_DIRS = {
     "node_modules", "dist", ".git", ".svn", "__pycache__",
     ".venv", "vendor", "coverage", ".nyc_output", ".turbo",
     "build", ".cache", ".output",
+    "__tests__", "__tests_dts__", "test", "tests", "__test__",
 }
 
-# File extensions to include
-SOURCE_EXTENSIONS = {
-    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
-    ".json", ".md", ".yaml", ".yml",
-}
+# File extensions to include for summarization
+SOURCE_EXTENSIONS = {".ts", ".tsx"}
 
 
 def _detect_language(path: str) -> str | None:
@@ -78,16 +77,39 @@ class Summarizer:
         prompt = f"File: {file_path}\n\n```\n{content}\n```"
         return self._provider.generate(prompt, system=SYSTEM_PROMPT).strip()
 
-    def summarize_repo(self, repo_path: Path) -> int:
+    def summarize_repo(
+        self,
+        repo_path: Path,
+        path_filter: str | None = None,
+        on_progress: Callable[[dict], None] | None = None,
+    ) -> int:
         """Walk all source files in the repo, summarize each, store in SQLite.
+
+        Args:
+            repo_path: Root of the repository.
+            path_filter: Optional path prefix to restrict which files are summarized.
+            on_progress: Optional callback for progress events.
 
         Returns the number of files summarized.
         """
         source_files = self._get_source_files(repo_path)
+        if path_filter:
+            source_files = [
+                f for f in source_files
+                if str(f.relative_to(repo_path)).startswith(path_filter)
+            ]
+
+        # Skip files that already have summaries
+        existing = self._get_summarized_paths()
+        skipped = [f for f in source_files if str(f.relative_to(repo_path)) in existing]
+        source_files = [f for f in source_files if str(f.relative_to(repo_path)) not in existing]
         total = len(source_files)
 
+        if skipped:
+            print(f"Skipping {len(skipped)} already-summarized files")
+
         if total == 0:
-            print("No source files found to summarize.")
+            print("No new files to summarize.")
             return 0
 
         print(f"Summarizing {total} files...")
@@ -124,6 +146,12 @@ class Summarizer:
             self._store.insert_file_summary(relative, summary, language, line_count)
             summarized += 1
 
+            if on_progress:
+                on_progress({
+                    "step": "summarize", "current": i, "total": total,
+                    "file": relative,
+                })
+
             if i % 50 == 0 or i == total:
                 print(f"  {i}/{total} files processed ({summarized} summarized)")
 
@@ -132,6 +160,11 @@ class Summarizer:
 
         print(f"Summarization complete: {summarized} files summarized")
         return summarized
+
+    def _get_summarized_paths(self) -> set[str]:
+        """Return file paths that already have summaries in SQLite."""
+        cur = self._store._conn.execute("SELECT file_path FROM file_summaries")
+        return {row["file_path"] for row in cur.fetchall()}
 
     def _get_source_files(self, repo_path: Path) -> list[Path]:
         """Get source files to summarize, respecting .gitignore via git ls-files."""

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -13,27 +12,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from indiseek import config
-from indiseek.indexer.parser import TypeScriptParser
+from indiseek.indexer.pipeline import get_tracked_ts_files, run_treesitter, run_scip, run_lexical
 from indiseek.storage.sqlite_store import SqliteStore
-
-
-def get_tracked_files(repo_path: Path) -> list[Path]:
-    """Get all .ts/.tsx files tracked by git, respecting .gitignore."""
-    result = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-        capture_output=True,
-        text=True,
-        cwd=repo_path,
-        check=True,
-    )
-    files = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        p = repo_path / line
-        if p.suffix in (".ts", ".tsx") and p.exists():
-            files.append(p)
-    return files
 
 
 def main() -> None:
@@ -59,6 +39,17 @@ def main() -> None:
         action="store_true",
         help="Build a Tantivy BM25 lexical index over code chunks",
     )
+    parser.add_argument(
+        "--filter",
+        type=str,
+        default=None,
+        help="Path prefix to restrict indexing (e.g. packages/vite/src)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what each stage would do without executing anything",
+    )
     args = parser.parse_args()
 
     repo_path = config.REPO_PATH
@@ -67,67 +58,95 @@ def main() -> None:
         print("Set REPO_PATH in .env or environment.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Indexing repository: {repo_path}")
-    start = time.time()
-
     # Initialize storage
     store = SqliteStore(config.SQLITE_PATH)
     store.init_db()
 
     # Discover files
-    ts_files = get_tracked_files(repo_path)
-    print(f"Found {len(ts_files)} TypeScript/TSX files")
+    ts_files = get_tracked_ts_files(repo_path)
+    if args.filter:
+        ts_files = [
+            f for f in ts_files
+            if str(f.relative_to(repo_path)).startswith(args.filter)
+        ]
 
-    # Parse with Tree-sitter
-    ts_parser = TypeScriptParser()
-    total_symbols = 0
-    total_chunks = 0
-    errors = 0
-
-    for i, fpath in enumerate(ts_files, 1):
-        relative = str(fpath.relative_to(repo_path))
-        if i % 100 == 0 or i == len(ts_files):
-            print(f"  Parsing {i}/{len(ts_files)}: {relative}")
-
-        try:
-            symbols = ts_parser.parse_file(fpath, relative)
-            chunks = ts_parser.chunk_file(fpath, relative)
-
-            if symbols:
-                store.insert_symbols(symbols)
-            if chunks:
-                store.insert_chunks(chunks)
-
-            total_symbols += len(symbols)
-            total_chunks += len(chunks)
-        except Exception as e:
-            errors += 1
-            print(f"  Warning: Failed to parse {relative}: {e}", file=sys.stderr)
-
-    print(f"\nTree-sitter parsing complete:")
-    print(f"  Files parsed: {len(ts_files)} ({errors} errors)")
-    print(f"  Symbols extracted: {total_symbols}")
-    print(f"  Chunks created: {total_chunks}")
-
-    # Load SCIP cross-references if available
+    # Resolve SCIP path
     scip_path = args.scip_path
     if scip_path is None:
         scip_path = repo_path / "index.scip"
 
+    # ── Dry run: report what would happen, then exit ──
+    if args.dry_run:
+        print(f"Repository: {repo_path}")
+        if args.filter:
+            print(f"Filter: {args.filter}")
+        print()
+
+        print(f"[tree-sitter]  {len(ts_files)} files to parse (always re-parsed)")
+        print(f"[scip]         {'yes' if scip_path.exists() else 'NO — not found at ' + str(scip_path)} (always re-loaded)")
+
+        if args.embed:
+            from indiseek.storage.vector_store import VectorStore
+            vector_store = VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS)
+            existing_embeds = len(vector_store.get_chunk_ids())
+            # After re-parse, chunk count will match ts_files; estimate from current DB
+            current_chunks = store.count("chunks")
+            new_to_embed = max(0, len(ts_files) - existing_embeds) if current_chunks == 0 else max(0, current_chunks - existing_embeds)
+            print(f"[embed]        {existing_embeds} already embedded, ~{new_to_embed} new (Gemini API calls)")
+        else:
+            print(f"[embed]        skipped (no --embed)")
+
+        if args.summarize:
+            from indiseek.indexer.summarizer import Summarizer
+            summarizer = Summarizer(store)
+            source_files = summarizer._get_source_files(repo_path)
+            if args.filter:
+                source_files = [
+                    f for f in source_files
+                    if str(f.relative_to(repo_path)).startswith(args.filter)
+                ]
+            existing_summaries = summarizer._get_summarized_paths()
+            already = sum(1 for f in source_files if str(f.relative_to(repo_path)) in existing_summaries)
+            new_to_summarize = len(source_files) - already
+            print(f"[summarize]    {already} already summarized, {new_to_summarize} new (Gemini API calls)")
+        else:
+            print(f"[summarize]    skipped (no --summarize)")
+
+        if args.lexical:
+            current_chunks = store.count("chunks")
+            print(f"[lexical]      will index all chunks in SQLite (currently {current_chunks}, rebuilt after parse)")
+        else:
+            print(f"[lexical]      skipped (no --lexical)")
+
+        store.close()
+        return
+
+    # ── Real run ──
+    print(f"Indexing repository: {repo_path}")
+    if args.filter:
+        print(f"Filter: {args.filter}")
+    print(f"Files: {len(ts_files)}")
+    start = time.time()
+
+    # Step 1: Tree-sitter parsing
+    ts_result = run_treesitter(store, repo_path, path_filter=args.filter)
+    print(f"\nTree-sitter parsing complete:")
+    print(f"  Files parsed: {ts_result['files_parsed']} ({ts_result['errors']} errors)")
+    print(f"  Symbols extracted: {ts_result['symbols']}")
+    print(f"  Chunks created: {ts_result['chunks']}")
+
+    # Step 2: SCIP cross-references
     if scip_path.exists():
         print(f"\nLoading SCIP index: {scip_path}")
-        from indiseek.indexer.scip import ScipLoader
-
-        loader = ScipLoader(store)
-        counts = loader.load(scip_path)
-        print(f"  SCIP symbols loaded: {counts['symbols']}")
-        print(f"  SCIP occurrences loaded: {counts['occurrences']}")
-        print(f"  SCIP relationships loaded: {counts['relationships']}")
+        scip_result = run_scip(store, scip_path)
+        print(f"  SCIP symbols loaded: {scip_result['symbols']}")
+        print(f"  SCIP occurrences loaded: {scip_result['occurrences']}")
+        print(f"  SCIP relationships loaded: {scip_result['relationships']}")
     else:
         print(f"\nNo SCIP index found at {scip_path}, skipping cross-references.")
         print("  Run: bash scripts/generate_scip.sh /path/to/repo")
 
-    # Embed chunks if requested
+    # Step 3: Embed chunks
     if args.embed:
         if not config.GEMINI_API_KEY:
             print("\nError: --embed requires GEMINI_API_KEY in .env", file=sys.stderr)
@@ -139,11 +158,11 @@ def main() -> None:
 
         vector_store = VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS)
         embedder = Embedder(store, vector_store)
-        n_embedded = embedder.embed_all_chunks()
+        n_embedded = embedder.embed_all_chunks(path_filter=args.filter)
         print(f"  Chunks embedded: {n_embedded}")
         print(f"  LanceDB: {config.LANCEDB_PATH}")
 
-    # Summarize files if requested
+    # Step 4: Summarize files
     if args.summarize:
         if not config.GEMINI_API_KEY:
             print("\nError: --summarize requires GEMINI_API_KEY in .env", file=sys.stderr)
@@ -153,17 +172,14 @@ def main() -> None:
         from indiseek.indexer.summarizer import Summarizer
 
         summarizer = Summarizer(store)
-        n_summarized = summarizer.summarize_repo(repo_path)
+        n_summarized = summarizer.summarize_repo(repo_path, path_filter=args.filter)
         print(f"  Files summarized: {n_summarized}")
 
-    # Build lexical index if requested
+    # Step 5: Lexical index
     if args.lexical:
         print("\nBuilding lexical index...")
-        from indiseek.indexer.lexical import LexicalIndexer
-
-        lexical_indexer = LexicalIndexer(store, config.TANTIVY_PATH)
-        n_indexed = lexical_indexer.build_index()
-        print(f"  Documents indexed in Tantivy: {n_indexed}")
+        lexical_result = run_lexical(store, config.TANTIVY_PATH)
+        print(f"  Documents indexed in Tantivy: {lexical_result['documents_indexed']}")
         print(f"  Index path: {config.TANTIVY_PATH}")
 
     elapsed = time.time() - start

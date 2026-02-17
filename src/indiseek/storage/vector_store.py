@@ -53,6 +53,24 @@ class VectorStore:
                 self.TABLE_NAME, schema=self._schema()
             )
 
+    def reset_table(self) -> None:
+        """Drop and recreate the chunks table for a clean re-embed."""
+        existing = self._db.list_tables().tables
+        if self.TABLE_NAME in existing:
+            self._db.drop_table(self.TABLE_NAME)
+        self._table = self._db.create_table(
+            self.TABLE_NAME, schema=self._schema()
+        )
+
+    def get_chunk_ids(self) -> set[int]:
+        """Return the set of chunk IDs already stored in LanceDB."""
+        table = self._get_table()
+        try:
+            arrow_table = table.to_arrow()
+            return set(arrow_table.column("chunk_id").to_pylist())
+        except Exception:
+            return set()
+
     def _get_table(self) -> lancedb.table.Table:
         if self._table is None:
             self.init_table()

@@ -1,0 +1,513 @@
+"""Dashboard API router — stats, tree, files, chunks, search, operations, SSE."""
+
+from __future__ import annotations
+
+import json
+import logging
+import queue
+import subprocess
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from indiseek import config
+from indiseek.api.task_manager import TaskManager
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+_task_manager = TaskManager()
+
+# ── Lazy-initialized stores ──
+
+
+def _get_sqlite_store():
+    from indiseek.storage.sqlite_store import SqliteStore
+    if not config.SQLITE_PATH.exists():
+        return None
+    store = SqliteStore(config.SQLITE_PATH)
+    store.init_db()
+    return store
+
+
+def _get_vector_store():
+    from indiseek.storage.vector_store import VectorStore
+    try:
+        return VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS)
+    except Exception:
+        return None
+
+
+def _get_lexical_indexer(store):
+    from indiseek.indexer.lexical import LexicalIndexer
+    try:
+        indexer = LexicalIndexer(store, config.TANTIVY_PATH)
+        indexer.open_index()
+        return indexer
+    except Exception:
+        return None
+
+
+# ── Stats ──
+
+
+@router.get("/stats")
+def get_stats():
+    """Pipeline coverage statistics across all three stores."""
+    result: dict[str, Any] = {
+        "sqlite": {"available": False},
+        "lancedb": {"available": False},
+        "tantivy": {"available": False},
+    }
+
+    store = _get_sqlite_store()
+    if store:
+        try:
+            result["sqlite"] = {
+                "available": True,
+                "files_parsed": len(store.get_all_file_paths_from_chunks()),
+                "chunks": store.count("chunks"),
+                "symbols": store.count("symbols"),
+                "scip_symbols": store.count("scip_symbols"),
+                "scip_occurrences": store.count("scip_occurrences"),
+                "file_summaries": store.count("file_summaries"),
+            }
+        except Exception as e:
+            logger.warning("Error reading SQLite stats: %s", e)
+            result["sqlite"] = {"available": True, "error": str(e)}
+
+    vs = _get_vector_store()
+    if vs:
+        try:
+            result["lancedb"] = {
+                "available": True,
+                "embedded_chunks": vs.count(),
+            }
+        except Exception:
+            result["lancedb"] = {"available": True, "embedded_chunks": 0}
+
+    if store:
+        lexical = _get_lexical_indexer(store)
+        if lexical:
+            try:
+                result["tantivy"] = {
+                    "available": True,
+                    "indexed_docs": lexical.doc_count(),
+                }
+            except Exception:
+                result["tantivy"] = {"available": True, "indexed_docs": 0}
+
+    return result
+
+
+# ── Tree ──
+
+
+@router.get("/tree")
+def get_tree(path: str = ""):
+    """One level of directory tree with coverage counts."""
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=503, detail="SQLite store not available")
+
+    repo_path = config.REPO_PATH
+    if not repo_path or not repo_path.is_dir():
+        raise HTTPException(status_code=503, detail="REPO_PATH not configured")
+
+    # Get all git-tracked files
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            capture_output=True, text=True, cwd=repo_path, check=True,
+        )
+        all_files = [f for f in result.stdout.strip().split("\n") if f]
+    except Exception:
+        all_files = []
+
+    # Get coverage data
+    chunked_files = store.get_all_file_paths_from_chunks()
+    summarized_files = store.get_all_file_paths_from_summaries()
+
+    vs = _get_vector_store()
+    embedded_files: set[str] = set()
+    if vs:
+        try:
+            arrow_table = vs._get_table().to_arrow()
+            embedded_files = set(arrow_table.column("file_path").to_pylist())
+        except Exception:
+            pass
+
+    # Filter to path prefix
+    prefix = path.rstrip("/") + "/" if path else ""
+    if prefix:
+        files_under = [f for f in all_files if f.startswith(prefix)]
+    else:
+        files_under = all_files
+
+    # Build one level of children
+    children: dict[str, dict] = {}
+    for f in files_under:
+        # Strip prefix to get relative
+        rel = f[len(prefix):] if prefix else f
+        parts = rel.split("/")
+
+        if len(parts) == 1:
+            # Direct file child
+            children[parts[0]] = {
+                "name": parts[0],
+                "type": "file",
+                "parsed": f in chunked_files,
+                "summarized": f in summarized_files,
+                "embedded": f in embedded_files,
+            }
+        else:
+            # Directory child — aggregate stats
+            dirname = parts[0]
+            if dirname not in children:
+                children[dirname] = {
+                    "name": dirname,
+                    "type": "directory",
+                    "total_files": 0,
+                    "parsed": 0,
+                    "summarized": 0,
+                    "embedded": 0,
+                }
+            children[dirname]["total_files"] += 1
+            if f in chunked_files:
+                children[dirname]["parsed"] += 1
+            if f in summarized_files:
+                children[dirname]["summarized"] += 1
+            if f in embedded_files:
+                children[dirname]["embedded"] += 1
+
+    return {
+        "path": path,
+        "children": sorted(children.values(), key=lambda c: (c["type"] == "file", c["name"])),
+    }
+
+
+# ── File detail ──
+
+
+@router.get("/files/{file_path:path}")
+def get_file_detail(file_path: str):
+    """File summary, chunks, and per-chunk pipeline status."""
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=503, detail="SQLite store not available")
+
+    summary = store.get_file_summary(file_path)
+    chunks = store.get_chunks_by_file(file_path)
+    symbols = store.get_symbols_by_file(file_path)
+
+    # Check which chunks are embedded
+    vs = _get_vector_store()
+    embedded_ids: set[int] = set()
+    if vs:
+        try:
+            embedded_ids = vs.get_chunk_ids()
+        except Exception:
+            pass
+
+    chunk_list = []
+    for c in chunks:
+        chunk_list.append({
+            **dict(c),
+            "embedded": c["id"] in embedded_ids,
+        })
+
+    return {
+        "file_path": file_path,
+        "summary": dict(summary) if summary else None,
+        "chunks": chunk_list,
+        "symbols": [dict(s) for s in symbols],
+    }
+
+
+# ── Chunk detail ──
+
+
+@router.get("/chunks/{chunk_id}")
+def get_chunk_detail(chunk_id: int):
+    """Full chunk data with pipeline status."""
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=503, detail="SQLite store not available")
+
+    chunk = store.get_chunk_by_id(chunk_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+
+    vs = _get_vector_store()
+    embedded = False
+    if vs:
+        try:
+            embedded = chunk_id in vs.get_chunk_ids()
+        except Exception:
+            pass
+
+    return {**chunk, "embedded": embedded}
+
+
+# ── Search ──
+
+
+class SearchQuery(BaseModel):
+    q: str
+    mode: str = "hybrid"
+    limit: int = 10
+
+
+@router.get("/search")
+def search_code(
+    q: str = Query(...),
+    mode: str = Query("hybrid"),
+    limit: int = Query(10),
+):
+    """Search code chunks via semantic, lexical, or hybrid modes."""
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=503, detail="SQLite store not available")
+
+    from indiseek.tools.search_code import CodeSearcher
+
+    lexical = _get_lexical_indexer(store)
+
+    embed_fn = None
+    if mode in ("semantic", "hybrid") and config.GEMINI_API_KEY:
+        from indiseek.agent.provider import GeminiProvider
+        provider = GeminiProvider()
+        embed_fn = lambda texts: provider.embed(texts)  # noqa: E731
+
+    try:
+        searcher = CodeSearcher(
+            lexical_indexer=lexical,
+            embed_fn=embed_fn,
+        )
+        results = searcher.search(q, mode=mode, limit=limit)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "query": q,
+        "mode": mode,
+        "results": [
+            {
+                "chunk_id": r.chunk_id,
+                "file_path": r.file_path,
+                "symbol_name": r.symbol_name,
+                "chunk_type": r.chunk_type,
+                "content": r.content[:500],
+                "score": r.score,
+                "match_type": r.match_type,
+            }
+            for r in results
+        ],
+    }
+
+
+# ── Indexing operations ──
+
+
+class RunRequest(BaseModel):
+    path_filter: str | None = None
+
+
+class RunScipRequest(BaseModel):
+    scip_path: str | None = None
+
+
+def _make_progress_callback(task_id: str):
+    """Create a progress callback bound to a task ID."""
+    def callback(event: dict):
+        _task_manager.push_progress(task_id, event)
+    return callback
+
+
+@router.post("/run/treesitter")
+def run_treesitter_op(req: RunRequest = RunRequest()):
+    """Trigger tree-sitter parsing in background."""
+    if _task_manager.has_running_task():
+        raise HTTPException(status_code=409, detail="A task is already running")
+
+    from indiseek.indexer.pipeline import run_treesitter
+    from indiseek.storage.sqlite_store import SqliteStore
+
+    def _run(path_filter=None):
+        store = SqliteStore(config.SQLITE_PATH)
+        store.init_db()
+        return run_treesitter(
+            store, config.REPO_PATH, path_filter=path_filter,
+            on_progress=_make_progress_callback(task_id),
+        )
+
+    task_id = _task_manager.submit("treesitter", _run, path_filter=req.path_filter)
+    return {"task_id": task_id, "name": "treesitter", "status": "running"}
+
+
+@router.post("/run/scip")
+def run_scip_op(req: RunScipRequest = RunScipRequest()):
+    """Trigger SCIP loading in background."""
+    if _task_manager.has_running_task():
+        raise HTTPException(status_code=409, detail="A task is already running")
+
+    from indiseek.indexer.pipeline import run_scip
+    from indiseek.storage.sqlite_store import SqliteStore
+
+    scip_path = Path(req.scip_path) if req.scip_path else config.REPO_PATH / "index.scip"
+
+    def _run():
+        store = SqliteStore(config.SQLITE_PATH)
+        store.init_db()
+        return run_scip(
+            store, scip_path,
+            on_progress=_make_progress_callback(task_id),
+        )
+
+    task_id = _task_manager.submit("scip", _run)
+    return {"task_id": task_id, "name": "scip", "status": "running"}
+
+
+@router.post("/run/embed")
+def run_embed_op(req: RunRequest = RunRequest()):
+    """Trigger embedding in background."""
+    if _task_manager.has_running_task():
+        raise HTTPException(status_code=409, detail="A task is already running")
+
+    if not config.GEMINI_API_KEY:
+        raise HTTPException(status_code=400, detail="GEMINI_API_KEY not configured")
+
+    from indiseek.indexer.embedder import Embedder
+    from indiseek.storage.sqlite_store import SqliteStore
+    from indiseek.storage.vector_store import VectorStore
+
+    def _run(path_filter=None):
+        store = SqliteStore(config.SQLITE_PATH)
+        store.init_db()
+        vs = VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS)
+        embedder = Embedder(store, vs)
+        return {"embedded": embedder.embed_all_chunks(
+            path_filter=path_filter,
+            on_progress=_make_progress_callback(task_id),
+        )}
+
+    task_id = _task_manager.submit("embed", _run, path_filter=req.path_filter)
+    return {"task_id": task_id, "name": "embed", "status": "running"}
+
+
+@router.post("/run/summarize")
+def run_summarize_op(req: RunRequest = RunRequest()):
+    """Trigger file summarization in background."""
+    if _task_manager.has_running_task():
+        raise HTTPException(status_code=409, detail="A task is already running")
+
+    if not config.GEMINI_API_KEY:
+        raise HTTPException(status_code=400, detail="GEMINI_API_KEY not configured")
+
+    from indiseek.indexer.summarizer import Summarizer
+    from indiseek.storage.sqlite_store import SqliteStore
+
+    def _run(path_filter=None):
+        store = SqliteStore(config.SQLITE_PATH)
+        store.init_db()
+        summarizer = Summarizer(store)
+        return {"summarized": summarizer.summarize_repo(
+            config.REPO_PATH, path_filter=path_filter,
+            on_progress=_make_progress_callback(task_id),
+        )}
+
+    task_id = _task_manager.submit("summarize", _run, path_filter=req.path_filter)
+    return {"task_id": task_id, "name": "summarize", "status": "running"}
+
+
+@router.post("/run/lexical")
+def run_lexical_op():
+    """Trigger lexical index build in background."""
+    if _task_manager.has_running_task():
+        raise HTTPException(status_code=409, detail="A task is already running")
+
+    from indiseek.indexer.pipeline import run_lexical
+    from indiseek.storage.sqlite_store import SqliteStore
+
+    def _run():
+        store = SqliteStore(config.SQLITE_PATH)
+        store.init_db()
+        return run_lexical(
+            store, config.TANTIVY_PATH,
+            on_progress=_make_progress_callback(task_id),
+        )
+
+    task_id = _task_manager.submit("lexical", _run)
+    return {"task_id": task_id, "name": "lexical", "status": "running"}
+
+
+# ── Task status ──
+
+
+@router.get("/tasks")
+def list_tasks():
+    """List all tasks with status."""
+    tasks = _task_manager.list_tasks()
+    # Strip progress_events from list view (can be large)
+    return [
+        {k: v for k, v in t.items() if k != "progress_events"}
+        for t in tasks
+    ]
+
+
+@router.get("/tasks/{task_id}")
+def get_task(task_id: str):
+    """Task detail with latest progress."""
+    task = _task_manager.get_status(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+# ── SSE streaming ──
+
+
+@router.get("/tasks/{task_id}/stream")
+def stream_task(task_id: str):
+    """SSE stream of progress events for a task."""
+    task = _task_manager.get_status(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    sub_queue = _task_manager.subscribe(task_id)
+    if sub_queue is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    def event_generator():
+        # First, replay any existing progress events
+        existing = task.get("progress_events", [])
+        for evt in existing:
+            yield f"data: {json.dumps({'type': 'progress', **evt})}\n\n"
+
+        # If task already finished, send final event
+        if task["status"] in ("completed", "failed"):
+            if task["status"] == "completed":
+                yield f"data: {json.dumps({'type': 'done', 'result': task.get('result')})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'error': task.get('error', '')})}\n\n"
+            return
+
+        # Stream new events from queue
+        while True:
+            try:
+                event = sub_queue.get(timeout=30)
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("type") in ("done", "error"):
+                    break
+            except queue.Empty:
+                # Send keepalive
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

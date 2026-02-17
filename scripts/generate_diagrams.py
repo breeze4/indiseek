@@ -865,6 +865,523 @@ def build_query_flow() -> dict:
     return _make_file(elements)
 
 
+# ─── Data Formats Diagram ─────────────────────────────────────────────
+
+# Additional colors for data format cards
+CARD_BG = "#f8f9fa"
+INFO_HDR = "#495057"
+SQLITE_HDR = "#1971c2"
+LANCE_HDR = "#e67700"
+TANTIVY_HDR = "#2b8a3e"
+WARN_BG = "#fff3bf"
+
+_LINE_H = 17  # approx line height at size=11
+
+
+def _card(
+    base_id: str, x: float, y: float, w: float,
+    title: str, body_lines: list[str], hdr_color: str,
+) -> tuple[list, float]:
+    """Render a table card: colored header bar + light-gray body with monospace text.
+
+    Returns (elements, total_height).
+    """
+    els: list = []
+    hdr_h = 28
+    body_h = len(body_lines) * _LINE_H + 16
+    total_h = hdr_h + body_h
+
+    # Header
+    els.append(_rect(f"{base_id}-hdr", x, y, w, hdr_h, hdr_color, stroke=hdr_color))
+    els.append(_text(f"{base_id}-title", x + 10, y + 5, title,
+                     size=13, color=WHITE, family=2, align="left"))
+
+    # Body
+    els.append(_rect(f"{base_id}-body", x, y + hdr_h, w, body_h, CARD_BG, stroke="#dee2e6"))
+    body_text = "\n".join(body_lines)
+    els.append(_text(f"{base_id}-text", x + 10, y + hdr_h + 8, body_text,
+                     size=11, color=DARK, family=3, align="left"))
+
+    return els, total_h
+
+
+def build_data_formats() -> dict:
+    """Diagram showing what each record looks like in SQLite, LanceDB, and Tantivy."""
+    _reset_ids()
+    elements: list = []
+
+    # ── Layout constants ──
+    COL1 = 60       # SQLite
+    COL2 = 510      # LanceDB
+    COL3 = 880      # Tantivy
+    CW1 = 430       # SQLite width (widest — most tables)
+    CW2 = 350       # LanceDB width
+    CW3 = 350       # Tantivy width
+    GAP = 14        # gap between cards
+
+    # ── Title ──
+    elements.append(_text("title", 60, 20,
+                          "Data Store Formats", size=28, family=2))
+    elements.append(_text("subtitle", 60, 56,
+                          "What each record looks like, with a concrete example from a Vite codebase",
+                          size=14, color=MUTED, family=2, align="left"))
+
+    # ── Source code example ──
+    src_y = 90
+    elements.append(_rect("src-bg", 60, src_y, 720, 145, GRAY, stroke="#adb5bd"))
+    elements.append(_text("src-hdr", 70, src_y + 8,
+                          "INPUT — packages/vite/src/node/server/index.ts (lines 45-50)",
+                          size=12, color="#495057", family=2, align="left"))
+    elements.append(_text("src-code", 70, src_y + 30,
+                          'export function createServer(\n'
+                          '  config: ServerConfig\n'
+                          '): Server {\n'
+                          '  const server = new HttpServer(config.port)\n'
+                          '  return server\n'
+                          '}',
+                          size=13, color=DARK, family=3, align="left"))
+
+    # ── Transformation labels (between source and columns) ──
+    ty = 248
+    elements.append(_text("t1", COL1, ty,
+                          "Tree-sitter AST parse + extract",
+                          size=11, color=DARK_GREEN, family=3, align="left"))
+    elements.append(_text("t2", COL2, ty,
+                          "chunks.content → Gemini embed API",
+                          size=11, color=DARK_ORANGE, family=3, align="left"))
+    elements.append(_text("t3", COL3, ty,
+                          "chunks.content → en_stem tokenizer",
+                          size=11, color=DARK_GREEN, family=3, align="left"))
+
+    col_y = 275
+
+    # ═══════════════════════════════════════════════════════════════════
+    # SQLITE COLUMN
+    # ═══════════════════════════════════════════════════════════════════
+    elements.append(_rect("sql-hdr", COL1, col_y, CW1, 32, SQLITE_HDR, stroke=SQLITE_HDR))
+    elements.append(_text("sql-title", COL1 + 10, col_y + 7,
+                          "SQLite (indiseek.db) — 6 tables",
+                          size=15, color=WHITE, family=2, align="left"))
+
+    sy = col_y + 42
+
+    # ─ symbols ─
+    els, h = _card("sym", COL1, sy, CW1, "symbols — per-symbol metadata", [
+        'id:         42',
+        'file_path:  "packages/vite/src/node/server/index.ts"',
+        'name:       "createServer"',
+        'kind:       "function"',
+        'start_line: 45   end_line: 48   (1-based)',
+        'signature:  "export function createServer(con..."',
+        '',
+        'kinds: function | class | method | interface',
+        '       type | enum | variable',
+    ], SQLITE_HDR)
+    elements.extend(els)
+    sy += h + GAP
+
+    # ─ chunks (THE KEY TABLE) ─
+    els, h = _card("chk", COL1, sy, CW1,
+                   "chunks — AST-scoped code slices  (KEY TABLE)", [
+        'id:             137   ← JOIN KEY to LanceDB & Tantivy',
+        'file_path:      "packages/vite/src/node/server/index.ts"',
+        'symbol_name:    "createServer"   (NULL for module chunks)',
+        'chunk_type:     "function"',
+        'start_line:     45',
+        'end_line:       48',
+        'content:        "export function createServer(\\n"',
+        '                "  config: ServerConfig\\n): Server {\\n"',
+        '                "  const server = new HttpServer(..."',
+        'token_estimate: 32   (= len(content) // 4)',
+        '',
+        'One chunk per top-level symbol in the file.',
+        'If file has zero symbols → one "module" chunk = full file.',
+    ], SQLITE_HDR)
+    elements.extend(els)
+    sy += h + GAP
+
+    # ─ file_summaries ─
+    els, h = _card("fsum", COL1, sy, CW1,
+                   "file_summaries — LLM-generated one-liners", [
+        'file_path:  "packages/vite/src/node/server/index.ts"',
+        'summary:    "Creates and configures the Vite dev server"',
+        '            "with HMR and middleware support."',
+        'language:   "ts"',
+        'line_count: 425',
+        '',
+        'Generated by: gemini-2.0-flash  (1 call per file)',
+        'Input: file content truncated to 30k chars',
+        'Prompt: "Summarize responsibility in one sentence"',
+    ], SQLITE_HDR)
+    elements.extend(els)
+    sy += h + GAP
+
+    # ─ scip_symbols ─
+    els, h = _card("ssym", COL1, sy, CW1,
+                   "scip_symbols — SCIP cross-ref identifiers", [
+        'id:            7',
+        'symbol:        "npm vite 5.0.0 src/`createServer`()."',
+        'documentation: "Create a Vite development server."',
+        '',
+        'Local symbols (function-scoped) filtered out.',
+        'Only globally-resolvable symbols stored.',
+    ], SQLITE_HDR)
+    elements.extend(els)
+    sy += h + GAP
+
+    # ─ scip_occurrences ─
+    els, h = _card("socc", COL1, sy, CW1,
+                   "scip_occurrences — where each symbol appears", [
+        'symbol_id:  7   → scip_symbols.id',
+        'file_path:  "src/node/server/index.ts"',
+        'start_line: 44   start_col: 16   (0-BASED!)',
+        'end_line:   44   end_col:   28',
+        'role:       "definition"   (or "reference")',
+        '',
+        'Warning: lines are 0-based (SCIP convention),',
+        'unlike symbols/chunks which are 1-based.',
+    ], SQLITE_HDR)
+    elements.extend(els)
+    sy += h + GAP
+
+    # ─ scip_relationships ─
+    els, h = _card("srel", COL1, sy, CW1,
+                   "scip_relationships — symbol connections", [
+        'symbol_id:         7   → scip_symbols.id',
+        'related_symbol_id: 12  → scip_symbols.id',
+        'relationship:      "implementation"',
+        '',
+        'Types: implementation | type_definition',
+        '       reference | definition',
+    ], SQLITE_HDR)
+    elements.extend(els)
+    sql_bottom = sy + h
+
+    # ═══════════════════════════════════════════════════════════════════
+    # LANCEDB COLUMN
+    # ═══════════════════════════════════════════════════════════════════
+    elements.append(_rect("lance-hdr", COL2, col_y, CW2, 32,
+                          LANCE_HDR, stroke=LANCE_HDR))
+    elements.append(_text("lance-title", COL2 + 10, col_y + 7,
+                          "LanceDB (vector store on disk)",
+                          size=15, color=WHITE, family=2, align="left"))
+
+    ly = col_y + 42
+
+    # ─ chunks vector table ─
+    els, h = _card("lchk", COL2, ly, CW2,
+                   'Table "chunks" — embeddings + metadata', [
+        'vector:      [0.023, -0.041, 0.117,',
+        '              0.089, -0.156, 0.034,',
+        '              ...  768 float32 values  ]',
+        '',
+        'chunk_id:    137   → SQLite chunks.id',
+        'file_path:   "packages/vite/src/.../index.ts"',
+        'symbol_name: "createServer"',
+        '             ("" when NULL — no nullable fields)',
+        'chunk_type:  "function"',
+        'content:     "export function createServer(..."',
+        '             (full source text, same as SQLite)',
+    ], LANCE_HDR)
+    elements.extend(els)
+    ly += h + GAP
+
+    # ─ How vectors are created ─
+    els, h = _card("lhow", COL2, ly, CW2,
+                   "How: source text → vector", [
+        '1. Read chunks.content from SQLite',
+        '2. Group into batches of 20 chunks',
+        '3. Send to Gemini Embedding API:',
+        '   model:  gemini-embedding-001',
+        '   input:  raw content (no prefix/format)',
+        '   output: 768-dim float32 vector',
+        '4. Store vector + chunk metadata in LanceDB',
+        '',
+        'Resume: already-embedded chunk_ids are skipped.',
+        'Retry: 1 retry/batch, 3 consecutive fails = abort.',
+    ], INFO_HDR)
+    elements.extend(els)
+    ly += h + GAP
+
+    # ─ Search behavior ─
+    els, h = _card("lsearch", COL2, ly, CW2,
+                   "At query time: cosine similarity", [
+        'Input: "HMR propagation"',
+        '  1. Embed query with same API/model',
+        '  2. Cosine distance search in LanceDB',
+        '  3. Returns: chunk_id, file_path,',
+        '     symbol_name, content, score',
+        '',
+        'Lower _distance = more similar.',
+        'Score inverted for ranking.',
+    ], INFO_HDR)
+    elements.extend(els)
+    lance_bottom = ly + h
+
+    # ═══════════════════════════════════════════════════════════════════
+    # TANTIVY COLUMN
+    # ═══════════════════════════════════════════════════════════════════
+    elements.append(_rect("tan-hdr", COL3, col_y, CW3, 32,
+                          TANTIVY_HDR, stroke=TANTIVY_HDR))
+    elements.append(_text("tan-title", COL3 + 10, col_y + 7,
+                          "Tantivy (BM25 full-text index)",
+                          size=15, color=WHITE, family=2, align="left"))
+
+    tty = col_y + 42
+
+    # ─ BM25 document ─
+    els, h = _card("tdoc", COL3, tty, CW3,
+                   "BM25 Document — one per chunk", [
+        'chunk_id:    137   → SQLite chunks.id',
+        '',
+        'content:     "export function createServer..."',
+        '  tokenizer: en_stem (English stemming)',
+        '  tokens:    ["export", "function",',
+        '              "createserv", "config",',
+        '              "serverconfig", "server",',
+        '              "httpserver", "port", ...]',
+        '',
+        'file_path:   ".../index.ts"  (raw, no tokenize)',
+        'symbol_name: "createServer"  (raw)',
+        'chunk_type:  "function"      (raw)',
+        'start_line:  45   (stored only, not indexed)',
+        'end_line:    48   (stored only, not indexed)',
+    ], TANTIVY_HDR)
+    elements.extend(els)
+    tty += h + GAP
+
+    # ─ Tokenizer details ─
+    els, h = _card("ttok", COL3, tty, CW3,
+                   "How: en_stem tokenizer examples", [
+        '"createServer"    → "createserv"',
+        '"HttpServer"      → "httpserver"',
+        '"configuration"   → "configur"',
+        '"dependencies"    → "depend"',
+        '',
+        'Stemming enables partial-match queries.',
+        '"configure" finds "configuration".',
+        '',
+        'raw fields (file_path, symbol_name):',
+        '  stored as-is, exact match only.',
+        '',
+        'Queries parsed against content only.',
+        'BM25 scoring: higher = more relevant.',
+    ], INFO_HDR)
+    elements.extend(els)
+    tty += h + GAP
+
+    # ─ Index lifecycle ─
+    els, h = _card("tlife", COL3, tty, CW3,
+                   "Index lifecycle", [
+        'build_index():',
+        '  1. rm -rf index directory',
+        '  2. Read ALL chunks from SQLite',
+        '  3. Write all docs in single pass',
+        '  4. Commit + wait for merge threads',
+        '',
+        'No incremental updates — full rebuild.',
+        'Fast enough it doesn\'t matter.',
+        'Writer heap: 50MB.',
+    ], INFO_HDR)
+    elements.extend(els)
+    tantivy_bottom = tty + h
+
+    # ═══════════════════════════════════════════════════════════════════
+    # JOIN KEY ANNOTATION (bottom)
+    # ═══════════════════════════════════════════════════════════════════
+    bottom_y = max(sql_bottom, lance_bottom, tantivy_bottom) + 30
+    ann_w = COL3 + CW3 - COL1
+    elements.append(_rect("join-bg", COL1, bottom_y, ann_w, 50,
+                          WARN_BG, stroke=DARK_ORANGE))
+    elements.append(_text("join-text", COL1 + 15, bottom_y + 8,
+                          "JOIN KEY:  chunk_id  connects all three stores  →  "
+                          "SQLite chunks.id is the primary key.\n"
+                          "LanceDB and Tantivy both store chunk_id as a foreign key "
+                          "to correlate search results back to SQLite.",
+                          size=12, color=DARK, family=3, align="left"))
+
+    return _make_file(elements)
+
+
+# ─── Query Trace Diagram ─────────────────────────────────────────────────
+
+RED_BG = "#ffc9c9"       # error steps
+YELLOW_BG = "#ffec99"    # wasteful/redundant steps
+GREEN_BG = "#b2f2bb"     # productive steps
+PURPLE_BG = "#d0bfff"    # synthesis
+DARK_RED = "#c92a2a"
+
+def build_query_trace() -> dict:
+    """Trace of a live query: 'How does Vite HMR propagation work when a CSS file changes?'
+
+    Captured 2025-02-15. 13 tool calls across 13 iterations — produced answer.
+    """
+    _reset_ids()
+    elements = []
+
+    # ── Title & subtitle ──
+    elements.append(_text("title", 30, 15,
+        "Query Trace: 'How does Vite HMR propagation work when a CSS file changes?'",
+        size=20, family=2, align="left"))
+    elements.append(_text("subtitle", 30, 48,
+        "Result: 13 tool calls across 13 iterations — ANSWER produced",
+        size=15, color=DARK_GREEN, family=2, align="left"))
+
+    # ── Legend ──
+    leg_x, leg_y = 720, 15
+    for i, (color, label) in enumerate([
+        (GREEN_BG, "Productive"),
+        (YELLOW_BG, "Redundant"),
+        (PURPLE_BG, "Synthesis"),
+    ]):
+        ry = leg_y + i * 22
+        elements.append(_rect(f"leg-r{i}", leg_x, ry, 16, 16, color))
+        elements.append(_text(f"leg-t{i}", leg_x + 22, ry,
+            label, size=13, family=2, align="left"))
+
+    # ── Tool call steps ──
+    # Each: (tool_call_text, color, annotation)
+    steps = [
+        ("search_code('CSS HMR propagation')",
+         GREEN_BG, "Good initial search — 10 results"),
+        ("read_file(css.ts, lines 1-540)",
+         GREEN_BG, "Key CSS plugin file found"),
+        ("search_code('handleHotUpdate packages/vite/.../css.ts')",
+         YELLOW_BG, "File path in query — semantic search ignores it"),
+        ("read_file(css.ts, lines 3000-3539)",
+         GREEN_BG, "Reading cssPostPlugin section"),
+        ("search_code('handleHotUpdate')",
+         GREEN_BG, "Broader search finds HMR handler"),
+        ("read_file(plugin.ts, lines 100-150)",
+         GREEN_BG, "Understanding Plugin interface"),
+        ("search_code('hotUpdate packages/vite/.../css.ts')",
+         YELLOW_BG, "Redundant — variant of step 3"),
+        ("read_file(css.ts, lines 1050-1150)",
+         GREEN_BG, "Reading chunk handling section"),
+        ("search_code('hotUpdate: packages/vite/.../css.ts')",
+         YELLOW_BG, "Redundant — 3rd variant of same query"),
+        ("search_code('Handle CSS @import dependency HMR...addWatchFile')",
+         GREEN_BG, "Targeted search for @import tracking"),
+        ("read_file(css.ts, lines 400-500)",
+         GREEN_BG, "Reading @import handling code"),
+        ("search_code('async handler(_, id) packages/vite/.../css.ts')",
+         YELLOW_BG, "Redundant — file path in query again"),
+        ("resolve_symbol('cssAnalysisPlugin', 'definition')",
+         GREEN_BG, "SCIP lookup — finds definition site"),
+    ]
+
+    box_x = 55
+    box_w = 520
+    box_h = 36
+    ann_x = 600
+    row_gap = 46
+    start_y = 100
+
+    for i, (call_text, bg, annotation) in enumerate(steps):
+        y = start_y + i * row_gap
+
+        # Step number
+        elements.append(_text(f"cn{i}", 10, y + 8,
+            f"{i+1}.", size=14, family=2, color=MUTED, align="right"))
+
+        # Call box
+        elements.extend(_labeled_box(
+            f"cr{i}", box_x, y, box_w, box_h, bg,
+            call_text, font_size=13,
+        ))
+
+        # Annotation
+        ann_color = MUTED
+        if bg == YELLOW_BG:
+            ann_color = DARK_ORANGE
+        elif bg == RED_BG:
+            ann_color = DARK_RED
+        elements.append(_text(f"ca{i}", ann_x, y + 8,
+            annotation, size=13, family=2, color=ann_color, align="left"))
+
+    # ── Phase brackets on the right ──
+    bracket_x = 1060
+
+    # Discovery phase: steps 1-2
+    disc_y1 = start_y
+    disc_y2 = start_y + 1 * row_gap + box_h
+    elements.append({
+        "id": "pb-disc", "type": "line",
+        "x": bracket_x, "y": disc_y1,
+        "width": 0, "height": disc_y2 - disc_y1,
+        "points": [[0, 0], [0, disc_y2 - disc_y1]],
+        "strokeColor": DARK_GREEN, "strokeWidth": 2, "strokeStyle": "dashed",
+        "roughness": 1, "opacity": 100, "angle": 0, "groupIds": [],
+        "isDeleted": False, "boundElements": [],
+        "startArrowhead": None, "endArrowhead": None,
+    })
+    elements.append(_text("pl-disc", bracket_x + 10,
+        (disc_y1 + disc_y2) // 2 - 10,
+        "Discovery", size=14, family=2, color=DARK_GREEN, align="left"))
+
+    # Deep exploration: steps 3-12
+    exp_y1 = start_y + 2 * row_gap
+    exp_y2 = start_y + 11 * row_gap + box_h
+    elements.append({
+        "id": "pb-exp", "type": "line",
+        "x": bracket_x, "y": exp_y1,
+        "width": 0, "height": exp_y2 - exp_y1,
+        "points": [[0, 0], [0, exp_y2 - exp_y1]],
+        "strokeColor": DARK_ORANGE, "strokeWidth": 2, "strokeStyle": "dashed",
+        "roughness": 1, "opacity": 100, "angle": 0, "groupIds": [],
+        "isDeleted": False, "boundElements": [],
+        "startArrowhead": None, "endArrowhead": None,
+    })
+    elements.append(_text("pl-exp", bracket_x + 10,
+        (exp_y1 + exp_y2) // 2 - 18,
+        "Deep exploration\n(some redundancy)",
+        size=14, family=2, color=DARK_ORANGE, align="left"))
+
+    # SCIP: step 13
+    scip_y1 = start_y + 12 * row_gap
+    scip_y2 = scip_y1 + box_h
+    elements.append({
+        "id": "pb-scip", "type": "line",
+        "x": bracket_x, "y": scip_y1,
+        "width": 0, "height": scip_y2 - scip_y1,
+        "points": [[0, 0], [0, scip_y2 - scip_y1]],
+        "strokeColor": DARK_PURPLE, "strokeWidth": 2, "strokeStyle": "dashed",
+        "roughness": 1, "opacity": 100, "angle": 0, "groupIds": [],
+        "isDeleted": False, "boundElements": [],
+        "startArrowhead": None, "endArrowhead": None,
+    })
+    elements.append(_text("pl-scip", bracket_x + 10, scip_y1 + 5,
+        "SCIP nav", size=14, family=2, color=DARK_PURPLE, align="left"))
+
+    # ── Diagnosis box ──
+    diag_y = start_y + 13 * row_gap + 20
+    elements.append(_rect("diag-bg", 30, diag_y, 1160, 120,
+        "#fff3bf", stroke=DARK_ORANGE))
+    elements.append(_text("diag-title", 50, diag_y + 8,
+        "DIAGNOSIS", size=18, family=2, color=DARK_ORANGE, align="left"))
+    elements.append(_text("diag-body", 50, diag_y + 36,
+        "\u2022 9/13 productive  |  4/13 redundant (file path in semantic query)  |  0 errors  |  ANSWER produced\n"
+        "\u2022 Compared to previous trace: 13 calls vs 15 calls, answer vs no answer\n"
+        "\u2022 Improvement: no path: filter errors (system prompt now warns against it)\n"
+        "\u2022 Remaining issue: 4 redundant searches still include file paths in semantic queries",
+        size=13, family=2, align="left"))
+
+    # ── Comparison with old trace ──
+    comp_y = diag_y + 140
+    elements.append(_rect("comp-bg", 30, comp_y, 1160, 100,
+        "#edf2ff", stroke="#5c7cfa"))
+    elements.append(_text("comp-title", 50, comp_y + 8,
+        "VS PREVIOUS TRACE (same query)", size=18, family=2,
+        color="#5c7cfa", align="left"))
+    elements.append(_text("comp-body", 50, comp_y + 36,
+        "Before:  15 iterations, 15 tool calls, 4 path: errors, 0 synthesis  \u2192  NO ANSWER\n"
+        "After:   13 iterations, 13 tool calls, 0 errors, answer produced  \u2192  ANSWER\n"
+        "Delta:   path: filter errors eliminated, model converges to synthesis at iter 13",
+        size=13, family=2, align="left"))
+
+    return _make_file(elements)
+
+
 def main():
     DIAGRAMS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -876,6 +1393,8 @@ def main():
         "step4-summarization.excalidraw": build_step4_detail(),
         "step5-lexical.excalidraw": build_step5_detail(),
         "query-flow.excalidraw": build_query_flow(),
+        "data-formats.excalidraw": build_data_formats(),
+        "query-trace.excalidraw": build_query_trace(),
     }
 
     for name, data in diagrams.items():

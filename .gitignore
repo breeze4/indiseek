@@ -38,5 +38,9 @@ Thumbs.db
 .coverage
 htmlcov/
 
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
 # Claude Code
 .claude/

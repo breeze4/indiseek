@@ -14,10 +14,16 @@ from indiseek import config
 from indiseek.indexer.lexical import LexicalIndexer
 from indiseek.storage.sqlite_store import SqliteStore
 from indiseek.storage.vector_store import VectorStore
-from indiseek.tools.read_file import read_file
+from indiseek.tools.read_file import format_file_content, read_file
 from indiseek.tools.read_map import read_map
 from indiseek.tools.resolve_symbol import resolve_symbol
-from indiseek.tools.search_code import CodeSearcher, format_results
+from indiseek.tools.search_code import (
+    CodeSearcher,
+    QueryCache,
+    format_results,
+    strip_file_paths,
+    summarize_results,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,13 +70,21 @@ Drill into a subdirectory for file summaries. The full tree is already above —
 call this if you need detail on a specific directory.
 
 ## Strategy
-1. Start with 1-2 targeted searches to find the relevant files and symbols.
-2. Use resolve_symbol to navigate definitions and call graphs — prefer this over \
-searching for symbol names.
-3. Use read_file to examine specific source code when you need exact details.
-4. Synthesize your answer once you have enough evidence — do NOT keep searching \
-if you already have the information you need.
-5. Always cite specific file paths and line numbers in your answer.
+1. **Plan first**: In your first turn, state your research plan. What are you looking \
+for and which tools will you use first?
+2. **Batch calls**: When you need multiple pieces of information, call multiple \
+tools in a single turn. For example, if you find a function and want to see its \
+definition AND who calls it, call `resolve_symbol` twice in one turn.
+3. **Targeted search**: Start with 1-2 targeted searches to find relevant files.
+4. **Precise navigation**: Once you have a symbol name, use `resolve_symbol` \
+rather than more searches. It is 100% accurate.
+5. **Cite evidence**: Always cite specific file paths and line numbers in your answer.
+
+### Example: Parallel Research
+If asked "How is the dev server created?", a good first turn might be:
+- Thought: "I'll start by searching for 'createServer' and also check the main server file."
+- Call: `search_code(query='createServer')`
+- Call: `read_file(path='src/node/server/index.ts', start_line=1, end_line=100)`
 
 ## Budget
 You have {max_iterations} iterations. Each iteration is one round of tool calls. \
@@ -234,6 +248,11 @@ class AgentLoop:
         self._searcher = code_searcher
         self._client = genai.Client(api_key=api_key or config.GEMINI_API_KEY)
         self._model = model or config.GEMINI_MODEL
+        # Per-run caches and state (reset at start of each run())
+        self._file_cache: dict[str, str] = {}
+        self._query_cache = QueryCache()
+        self._resolve_cache: dict[tuple[str, str], str] = {}
+        self._resolve_symbol_used: bool = False
 
     def _build_system_prompt(self) -> str:
         """Build system prompt with the top-level repo map baked in."""
@@ -251,21 +270,73 @@ class AgentLoop:
         if name == "read_map":
             result = read_map(self._store, path=args.get("path"))
         elif name == "search_code":
-            query = args["query"]
+            query = strip_file_paths(args["query"])
             mode = args.get("mode", "hybrid")
-            results = self._searcher.search(query, mode=mode, limit=10)
-            result = format_results(results, query)
+            cached = self._query_cache.get(query)
+            if cached is not None:
+                result = (
+                    f"[Cache hit — similar query already executed]\n{cached}"
+                )
+            else:
+                results = self._searcher.search(query, mode=mode, limit=10)
+                result = format_results(results, query)
+                self._query_cache.put(query, result)
         elif name == "resolve_symbol":
-            result = resolve_symbol(
-                self._store, args["symbol_name"], args["action"]
-            )
+            self._resolve_symbol_used = True
+            symbol_name = args["symbol_name"]
+            action = args["action"]
+            cache_key = (symbol_name, action)
+            if cache_key in self._resolve_cache:
+                logger.debug("  resolve cache hit: %s/%s", symbol_name, action)
+                result = f"[Cache hit]\n{self._resolve_cache[cache_key]}"
+            else:
+                result = resolve_symbol(self._store, symbol_name, action)
+                self._resolve_cache[cache_key] = result
         elif name == "read_file":
-            result = read_file(
-                self._repo_path,
-                args["path"],
-                start_line=args.get("start_line"),
-                end_line=args.get("end_line"),
-            )
+            file_path = args["path"]
+            start_line = args.get("start_line")
+            end_line = args.get("end_line")
+            
+            if file_path in self._file_cache:
+                logger.debug("  file cache hit: %s", file_path)
+                content = self._file_cache[file_path]
+                result = format_file_content(content, file_path, start_line, end_line)
+            else:
+                # First access — validate and read from disk
+                full_path = (self._repo_path / file_path).resolve()
+                repo_resolved = self._repo_path.resolve()
+
+                if not str(full_path).startswith(str(repo_resolved)):
+                    result = f"Error: Path '{file_path}' is outside the repository."
+                    content = None
+                elif not full_path.exists():
+                    result = f"Error: File '{file_path}' not found."
+                    content = None
+                elif not full_path.is_file():
+                    result = f"Error: '{file_path}' is not a file."
+                    content = None
+                else:
+                    try:
+                        content = full_path.read_text(encoding="utf-8", errors="replace")
+                        self._file_cache[file_path] = content
+                        result = format_file_content(content, file_path, start_line, end_line)
+                    except OSError as e:
+                        result = f"Error reading '{file_path}': {e}"
+                        content = None
+
+            # Add implicit symbol definitions found in this range
+            if content is not None:
+                # If no range, format_file_content uses DEFAULT_LINE_CAP (500)
+                from indiseek.tools.read_file import DEFAULT_LINE_CAP
+                s = start_line or 1
+                e = end_line or min(len(content.splitlines()), DEFAULT_LINE_CAP)
+                
+                symbols = self._store.get_symbols_in_range(file_path, s, e)
+                if symbols:
+                    sym_lines = ["\nSymbols defined in this range:"]
+                    for sym in symbols:
+                        sym_lines.append(f"  - {sym['name']} ({sym['kind']}) at line {sym['start_line']}")
+                    result += "\n" + "\n".join(sym_lines)
         else:
             result = f"Unknown tool: {name}"
 
@@ -273,12 +344,38 @@ class AgentLoop:
         logger.debug("  tool done: %s -> %d chars (%.3fs)", name, len(result), elapsed)
         return result
 
+    def _maybe_inject_tool_hint(self, iteration: int) -> str | None:
+        """Return a hint nudging the model toward better behavior based on progress."""
+        hints = []
+        if iteration >= 5 and not self._resolve_symbol_used:
+            hints.append(
+                "You haven't used resolve_symbol yet. It provides precise "
+                "cross-reference data (definition, references, callers, callees) and "
+                "is more accurate than searching for symbol names. Try it now."
+            )
+        
+        if iteration == 10:
+            hints.append(
+                "You are at iteration 10/15. Review your collected evidence. "
+                "If you have enough to answer, synthesize now. Otherwise, focus "
+                "on the single most critical piece of information remaining."
+            )
+            
+        if not hints:
+            return None
+            
+        return "\n[HINT: " + " ".join(hints) + "]"
+
     def run(self, prompt: str) -> AgentResult:
         """Run the agent loop until a text answer is produced or max iterations reached."""
         logger.info("Agent run started: %r", prompt[:120])
         run_t0 = time.perf_counter()
         evidence: list[EvidenceStep] = []
         tool_call_count = 0
+        self._file_cache.clear()
+        self._query_cache.clear()
+        self._resolve_cache.clear()
+        self._resolve_symbol_used = False
 
         logger.debug("Building system prompt (includes read_map)...")
         t0 = time.perf_counter()
@@ -372,12 +469,42 @@ class AgentLoop:
             for call in response.function_calls:
                 args = dict(call.args) if call.args else {}
                 logger.info("  -> %s(%s)", call.name, ", ".join(f"{k}={v!r}" for k, v in args.items()))
+                
+                raw_result: str | None = None
                 try:
-                    result = self._execute_tool(call.name, args)
+                    # Special case for search_code to get raw results for summary
+                    if call.name == "search_code":
+                        query = strip_file_paths(args["query"])
+                        mode = args.get("mode", "hybrid")
+                        cached = self._query_cache.get(query)
+                        if cached is not None:
+                            result = f"[Cache hit — similar query already executed]\n{cached}"
+                            summary = f"Search (Cache Hit): {query}"
+                        else:
+                            results = self._searcher.search(query, mode=mode, limit=10)
+                            result = format_results(results, query)
+                            self._query_cache.put(query, result)
+                            summary = f"Search: {query} -> {summarize_results(results)}"
+                    else:
+                        result = self._execute_tool(call.name, args)
+                        # Build summary based on tool
+                        if call.name == "read_file":
+                            summary = f"Read {args['path']}"
+                            if "start_line" in args:
+                                summary += f" (lines {args['start_line']}-{args.get('end_line', '')})"
+                        elif call.name == "resolve_symbol":
+                            # Extract result count from first line: "Definition of 'foo' (SCIP, 2 result(s)):"
+                            first_line = result.splitlines()[0] if result else ""
+                            summary = f"Symbol: {args['symbol_name']} ({args['action']}) -> {first_line}"
+                        elif call.name == "read_map":
+                            summary = f"Map: {args.get('path', 'root')}"
+                        else:
+                            summary = result[:100] + "..." if len(result) > 100 else result
                 except Exception as e:
                     result = f"Error: {e}"
                     result += _error_hint(call.name, args, str(e))
                     logger.error("  tool error: %s: %s", call.name, e)
+                    summary = f"Error: {e}"
 
                 # Truncate long results to stay within context limits
                 if len(result) > 15000:
@@ -402,6 +529,11 @@ class AgentLoop:
                         f"\n[Iteration {iteration + 1}/{MAX_ITERATIONS}, "
                         f"{tool_call_count} tool calls used]"
                     )
+
+                # Inject resolve_symbol hint if applicable
+                hint = self._maybe_inject_tool_hint(iteration)
+                if hint:
+                    result += hint
 
                 evidence.append(
                     EvidenceStep(

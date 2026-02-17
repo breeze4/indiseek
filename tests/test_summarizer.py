@@ -215,10 +215,11 @@ class TestSummarizer:
 class TestGeminiProviderGenerate:
     def test_provider_has_generate_method(self) -> None:
         from indiseek.agent.provider import GeminiProvider
+        from indiseek import config
 
         provider = GeminiProvider(api_key="test-key")
         assert hasattr(provider, "generate")
-        assert provider._generation_model == "gemini-2.0-flash"
+        assert provider._generation_model == config.GEMINI_MODEL
 
     def test_provider_custom_generation_model(self) -> None:
         from indiseek.agent.provider import GeminiProvider

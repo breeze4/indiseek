@@ -152,6 +152,13 @@ class TestToolExecution:
         agent._execute_tool("search_code", {"query": "test", "mode": "lexical"})
         mock_searcher.search.assert_called_once_with("test", mode="lexical", limit=10)
 
+    def test_execute_search_code_strips_file_paths(self, store, repo_dir):
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = []
+        agent = AgentLoop(store, repo_dir, mock_searcher, api_key="fake")
+        agent._execute_tool("search_code", {"query": "createServer src/server/index.ts"})
+        mock_searcher.search.assert_called_once_with("createServer", mode="hybrid", limit=10)
+
     def test_execute_unknown_tool(self, store, repo_dir, searcher):
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         result = agent._execute_tool("nonexistent", {})
@@ -162,6 +169,150 @@ class TestToolExecution:
         # read_file with a non-existent file returns an error message, not an exception
         result = agent._execute_tool("read_file", {"path": "nonexistent.ts"})
         assert "Error" in result or "not found" in result
+
+
+# ── File read caching tests ──
+
+
+class TestFileReadCaching:
+    def test_read_file_caching_same_file(self, store, repo_dir, searcher):
+        """Second read of same file should come from cache, not disk."""
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        result1 = agent._execute_tool("read_file", {"path": "src/main.ts"})
+        assert "function hello" in result1
+
+        # Patch Path.read_text to count calls from here on
+        with patch.object(Path, "read_text", wraps=Path.read_text) as spy:
+            result2 = agent._execute_tool("read_file", {"path": "src/main.ts"})
+            assert spy.call_count == 0  # served from cache
+        assert "function hello" in result2
+
+    def test_read_file_caching_different_files(self, store, repo_dir, searcher):
+        """Different files should both be cached."""
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        agent._execute_tool("read_file", {"path": "src/main.ts"})
+        assert "src/main.ts" in agent._file_cache
+        # Need a second file — it's already in repo_dir from the fixture? No,
+        # repo_dir fixture only has src/main.ts. Let's create one.
+        (repo_dir / "src" / "extra.ts").write_text("const x = 1;\n")
+        agent._execute_tool("read_file", {"path": "src/extra.ts"})
+        assert "src/extra.ts" in agent._file_cache
+        assert len(agent._file_cache) == 2
+
+    def test_read_file_cache_line_range_slicing(self, store, repo_dir, searcher):
+        """Cache hit with line range should return correct slice."""
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        # First read caches full content
+        agent._execute_tool("read_file", {"path": "src/main.ts"})
+        # Second read requests only line 2
+        result = agent._execute_tool(
+            "read_file", {"path": "src/main.ts", "start_line": 2, "end_line": 2}
+        )
+        assert "console.log" in result
+        assert "function hello" not in result
+
+
+# ── Search query caching tests ──
+
+
+class TestSearchQueryCaching:
+    def test_search_code_caching_similar_queries(self, store, repo_dir):
+        """Similar queries should be served from cache; searcher called once."""
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [
+            HybridResult(
+                chunk_id=1, file_path="src/main.ts", symbol_name="hello",
+                chunk_type="function", content="function hello() {}", score=0.9,
+                match_type="lexical",
+            ),
+        ]
+        agent = AgentLoop(store, repo_dir, mock_searcher, api_key="fake")
+        result1 = agent._execute_tool("search_code", {"query": "HMR CSS hot update"})
+        result2 = agent._execute_tool("search_code", {"query": "CSS HMR hot update"})
+        # Searcher should only be called once — second was a cache hit
+        assert mock_searcher.search.call_count == 1
+        assert "Cache hit" in result2
+
+
+# ── resolve_symbol hint tests ──
+
+
+class TestResolveSymbolHints:
+    def test_hint_injected_at_iteration_5(self, store, repo_dir, searcher):
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        agent._resolve_symbol_used = False
+        hint = agent._maybe_inject_tool_hint(iteration=5)
+        assert hint is not None
+        assert "resolve_symbol" in hint
+
+    def test_no_hint_before_iteration_5(self, store, repo_dir, searcher):
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        agent._resolve_symbol_used = False
+        assert agent._maybe_inject_tool_hint(iteration=3) is None
+
+    def test_no_hint_if_already_used(self, store, repo_dir, searcher):
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        agent._resolve_symbol_used = True
+        assert agent._maybe_inject_tool_hint(iteration=6) is None
+
+
+# ── Parallel tool call tests ──
+
+
+class TestParallelToolCalls:
+    def test_system_prompt_encourages_parallel_tools(self):
+        assert any(
+            kw in SYSTEM_PROMPT_TEMPLATE.lower()
+            for kw in ("batch", "parallel", "multiple tool")
+        )
+
+    def test_agent_handles_multiple_parallel_tool_calls(self, store, repo_dir, searcher):
+        """Response with 3 simultaneous function_calls should all appear in evidence."""
+        store.insert_file_summaries([
+            ("src/main.ts", "Main entry", "ts", 3),
+        ])
+        store.insert_symbols([
+            Symbol(
+                id=None, file_path="src/main.ts", name="hello",
+                kind="function", start_line=1, start_col=0,
+                end_line=3, end_col=1, signature="function hello()",
+            ),
+        ])
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+
+        # Build a response with 3 parallel function calls
+        fn1 = MagicMock()
+        fn1.name = "read_map"
+        fn1.args = {}
+        fn2 = MagicMock()
+        fn2.name = "resolve_symbol"
+        fn2.args = {"symbol_name": "hello", "action": "definition"}
+        fn3 = MagicMock()
+        fn3.name = "read_file"
+        fn3.args = {"path": "src/main.ts"}
+
+        content = MagicMock()
+        content.role = "model"
+        content.parts = [MagicMock(), MagicMock(), MagicMock()]
+
+        candidate = MagicMock()
+        candidate.content = content
+
+        parallel_resp = MagicMock()
+        parallel_resp.candidates = [candidate]
+        parallel_resp.function_calls = [fn1, fn2, fn3]
+        parallel_resp.text = None
+
+        text_resp = _make_text_response("All done.")
+
+        agent._client = MagicMock()
+        agent._client.models.generate_content.side_effect = [parallel_resp, text_resp]
+
+        result = agent.run("Test parallel")
+        assert result.answer == "All done."
+        assert len(result.evidence) == 3
+        tools_used = {e.tool for e in result.evidence}
+        assert tools_used == {"read_map", "resolve_symbol", "read_file"}
 
 
 # ── Agent loop tests (mocked Gemini) ──

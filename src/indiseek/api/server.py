@@ -1,15 +1,19 @@
-"""FastAPI server with POST /query endpoint."""
+"""FastAPI server with POST /query endpoint and dashboard."""
 
 from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from indiseek import config
 from indiseek.agent.loop import AgentResult, create_agent_loop
+from indiseek.api.dashboard import router as dashboard_router
 
 # Configure logging on import — before anything else logs
 logging.basicConfig(
@@ -21,6 +25,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Indiseek", description="Codebase research service")
+
+# CORS for dashboard dev server
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Dashboard API
+app.include_router(dashboard_router, prefix="/dashboard/api")
 
 # Lazy-initialized agent loop (created on first request or startup)
 _agent_loop = None
@@ -82,3 +97,10 @@ def query(req: QueryRequest):
     except Exception as e:
         logger.exception("Agent error after %.2fs", time.perf_counter() - t0)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Dashboard SPA static files ──
+# Must be mounted after all API routes. Serves the built React app.
+_dashboard_dist = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
+if _dashboard_dist.is_dir():
+    app.mount("/dashboard", StaticFiles(directory=str(_dashboard_dist), html=True), name="dashboard")

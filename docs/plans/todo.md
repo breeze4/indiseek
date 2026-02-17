@@ -663,6 +663,37 @@ Implement the Gemini-powered agent loop that uses tool-calling to navigate the i
 
 ---
 
+## Phase 8: Query Flow Improvements (Refinement)
+
+### Overview
+Address inefficiencies observed in query traces to reduce iteration count and improve answer quality. Based on `docs/plans/issues.md`.
+
+### Tasks
+- [x] **Strip file paths from search_code**: Ensure queries like `search_code('foo in src/bar.ts')` are cleaned to `search_code('foo')`.
+- [x] **Deduplicate similar searches**: Use Jaccard similarity to cache and reuse results for near-identical search queries.
+- [x] **Coalesce file reads**: Cache full file contents on first access and serve subsequent range requests from memory.
+- [x] **Cache resolve_symbol calls**: Prevent redundant SCIP lookups for the same symbol/action pair.
+- [ ] **Improve Evidence Summaries**: Use specialized summary functions for each tool to make the `EvidenceStep` log more readable.
+- [ ] **Reinforce resolve_symbol usage**: Update system prompt and mid-loop hints to push the model toward precise navigation over fuzzy search.
+- [ ] **Encourage Parallel Tool Calls**: Refine system prompt instructions to highlight batching independent operations.
+
+---
+
+## Phase 9: Advanced Agentic Research Improvements
+
+### Overview
+Moving from simple tool-calling to more deliberate "researching" behavior.
+
+### Tasks
+- [x] **Normalize punctuation for query deduplication**: Update `compute_query_similarity` to ignore punctuation, catching variants like `foo()` vs `foo`.
+- [x] **Lower Jaccard threshold for short queries**: For 1-token queries, 0.8 is too strict; consider a lower threshold or exact match only.
+- [x] **Plan-Ahead Phase**: Prompt the agent to output a "Research Plan" in its first response to improve multi-step reasoning.
+- [x] **Implicit Symbol Definitions in read_file**: Include a list of symbols defined in the returned range to save the agent from calling `resolve_symbol` just to find start/end lines.
+- [x] **Iteration 10 Reflection Hint**: Inject a specific nudge when the budget is running low to force the agent to evaluate its current evidence.
+- [x] **Few-shot Parallel Call Examples**: Add explicit examples of parallel tool usage to the system prompt to encourage model adoption.
+
+---
+
 ## Full Indexing Command
 
 Once all phases are implemented, a full index run looks like:

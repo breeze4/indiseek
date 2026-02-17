@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
+from typing import Callable
 
 from indiseek.agent.provider import EmbeddingProvider, GeminiProvider
 from indiseek.storage.sqlite_store import SqliteStore
@@ -30,19 +31,38 @@ class Embedder:
         self._provider = provider or GeminiProvider()
         self._batch_size = batch_size
 
-    def embed_all_chunks(self) -> int:
-        """Embed all chunks from SQLite and store in LanceDB.
+    def embed_all_chunks(
+        self,
+        path_filter: str | None = None,
+        on_progress: Callable[[dict], None] | None = None,
+    ) -> int:
+        """Embed chunks from SQLite that aren't already in LanceDB.
+
+        Args:
+            path_filter: Optional file path prefix to restrict which chunks are embedded.
+            on_progress: Optional callback for progress events.
 
         Returns the total number of chunks embedded.
         """
-        self._vector_store.init_table()
-
         # Load all chunks from SQLite
-        cur = self._store._conn.execute(
-            "SELECT id, file_path, symbol_name, chunk_type, content FROM chunks"
-        )
+        if path_filter:
+            cur = self._store._conn.execute(
+                "SELECT id, file_path, symbol_name, chunk_type, content FROM chunks "
+                "WHERE file_path LIKE ?",
+                (path_filter + "%",),
+            )
+        else:
+            cur = self._store._conn.execute(
+                "SELECT id, file_path, symbol_name, chunk_type, content FROM chunks"
+            )
         all_chunks = cur.fetchall()
+
+        # Skip chunks already embedded
+        existing_ids = self._vector_store.get_chunk_ids()
+        all_chunks = [c for c in all_chunks if c["id"] not in existing_ids]
         total = len(all_chunks)
+        if existing_ids:
+            print(f"  Skipping {len(existing_ids)} already-embedded chunks")
 
         if total == 0:
             print("No chunks found in SQLite. Run tree-sitter parsing first.")
@@ -99,6 +119,12 @@ class Embedder:
                 contents=texts,
             )
             embedded += len(batch)
+
+            if on_progress:
+                on_progress({
+                    "step": "embed", "current": embedded, "total": total,
+                    "batch": batch_num, "total_batches": total_batches,
+                })
 
             if batch_num % 10 == 0 or batch_num == total_batches:
                 print(f"  Batch {batch_num}/{total_batches} — {embedded}/{total} chunks embedded")

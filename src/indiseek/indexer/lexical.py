@@ -96,6 +96,35 @@ class LexicalIndexer:
             self.open_index()
         return self._index  # type: ignore[return-value]
 
+    def doc_count(self) -> int:
+        """Return the number of documents in the index, or 0 if not open."""
+        try:
+            index = self._get_index()
+            return index.searcher().num_docs
+        except Exception:
+            return 0
+
+    def get_indexed_file_paths(self) -> set[str]:
+        """Return distinct file paths in the index.
+
+        Since Tantivy is always rebuilt from SQLite chunks, this is equivalent
+        to the set of file paths in the chunks table. We query the index directly
+        to confirm what's actually indexed.
+        """
+        try:
+            index = self._get_index()
+            searcher = index.searcher()
+            # Search for all docs by matching everything
+            query = index.parse_query("*", ["content"])
+            results = searcher.search(query, limit=searcher.num_docs or 1)
+            paths = set()
+            for _score, doc_address in results.hits:
+                doc = searcher.doc(doc_address)
+                paths.add(doc["file_path"][0])
+            return paths
+        except Exception:
+            return set()
+
     def search(self, query_str: str, limit: int = 10) -> list[LexicalResult]:
         """Search the BM25 index. Returns results sorted by relevance."""
         index = self._get_index()

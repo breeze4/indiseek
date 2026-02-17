@@ -118,6 +118,19 @@ class SqliteStore:
         )
         self._conn.commit()
 
+    def clear_index_data(self) -> None:
+        """Delete all indexed data (symbols, chunks, SCIP) for a clean re-index."""
+        self._conn.executescript(
+            """
+            DELETE FROM scip_relationships;
+            DELETE FROM scip_occurrences;
+            DELETE FROM scip_symbols;
+            DELETE FROM chunks;
+            DELETE FROM symbols;
+            """
+        )
+        self._conn.commit()
+
     # ── Symbol operations ──
 
     def insert_symbols(self, symbols: list[Symbol]) -> None:
@@ -158,6 +171,16 @@ class SqliteStore:
 
     def get_symbols_by_file(self, file_path: str) -> list[dict]:
         cur = self._conn.execute("SELECT * FROM symbols WHERE file_path = ?", (file_path,))
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_symbols_in_range(self, file_path: str, start_line: int, end_line: int) -> list[dict]:
+        """Find symbols whose definition starts within the given line range."""
+        cur = self._conn.execute(
+            """SELECT * FROM symbols 
+               WHERE file_path = ? AND start_line >= ? AND start_line <= ?
+               ORDER BY start_line""",
+            (file_path, start_line, end_line),
+        )
         return [dict(row) for row in cur.fetchall()]
 
     # ── Chunk operations ──
@@ -327,6 +350,51 @@ class SqliteStore:
                 node = node.setdefault(part, {})
             node[parts[-1]] = row["summary"]
         return tree
+
+    # ── Dashboard query methods ──
+
+    def get_chunk_by_id(self, chunk_id: int) -> dict | None:
+        """Look up a single chunk by primary key."""
+        cur = self._conn.execute("SELECT * FROM chunks WHERE id = ?", (chunk_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def get_all_file_paths_from_chunks(self) -> set[str]:
+        """Return distinct file paths that have chunks."""
+        cur = self._conn.execute("SELECT DISTINCT file_path FROM chunks")
+        return {row[0] for row in cur.fetchall()}
+
+    def get_all_file_paths_from_summaries(self) -> set[str]:
+        """Return distinct file paths that have summaries."""
+        cur = self._conn.execute("SELECT DISTINCT file_path FROM file_summaries")
+        return {row[0] for row in cur.fetchall()}
+
+    def get_file_summary(self, file_path: str) -> dict | None:
+        """Look up a single file summary by exact path."""
+        cur = self._conn.execute(
+            "SELECT * FROM file_summaries WHERE file_path = ?", (file_path,)
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def clear_index_data_for_prefix(self, prefix: str) -> dict[str, int]:
+        """Delete chunks and symbols for files matching a path prefix.
+
+        Does NOT touch SCIP data or file_summaries.
+        Returns counts of deleted rows.
+        """
+        pattern = prefix + "%"
+        cur_chunks = self._conn.execute(
+            "DELETE FROM chunks WHERE file_path LIKE ?", (pattern,)
+        )
+        cur_symbols = self._conn.execute(
+            "DELETE FROM symbols WHERE file_path LIKE ?", (pattern,)
+        )
+        self._conn.commit()
+        return {
+            "chunks_deleted": cur_chunks.rowcount,
+            "symbols_deleted": cur_symbols.rowcount,
+        }
 
     # ── Counts ──
 
