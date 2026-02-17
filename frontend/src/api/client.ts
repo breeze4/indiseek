@@ -35,6 +35,7 @@ export interface Stats {
 export interface TreeChild {
   name: string
   type: 'file' | 'directory'
+  summary?: string | null
   // file fields
   parsed?: boolean
   summarized?: boolean

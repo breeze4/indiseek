@@ -162,17 +162,17 @@ Render directory and file summaries in the FileTree UI.
 **Implementation:**
 
 In `frontend/src/api/client.ts`:
-- [ ] Add `summary?: string` to `TreeChild` interface
+- [x] Add `summary?: string` to `TreeChild` interface
 
 In `frontend/src/pages/FileTree.tsx`:
-- [ ] File rows: add summary text between filename and badges — `flex-1 min-w-0 truncate text-xs text-gray-500`
-- [ ] Directory rows: add summary between dir name and stats — same truncated style
-- [ ] Use `title={child.summary}` for hover to see full text
-- [ ] Graceful degradation if no summary
+- [x] File rows: add summary text between filename and badges — `flex-1 min-w-0 truncate text-xs text-gray-500`
+- [x] Directory rows: add summary between dir name and stats — same truncated style
+- [x] Use `title={child.summary}` for hover to see full text
+- [x] Graceful degradation if no summary
 
 **Verify:**
-- [ ] `cd frontend && npm run build` succeeds
-- [ ] `pytest` passes (no Python changes expected, but confirm nothing broke)
+- [x] `cd frontend && npm run build` succeeds
+- [x] `pytest` passes (no Python changes expected, but confirm nothing broke)
 
 ---
 

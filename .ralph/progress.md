@@ -427,3 +427,29 @@ _Session duration: 4m 54s — 2026-02-17 14:49:50_
 ### Notes
 - The `/tree` endpoint uses individual `get_file_summary()` calls for file children rather than a batch method because the existing store API doesn't have a batch file summary lookup by exact paths (only `get_file_summaries(directory=...)` with prefix matching). This is acceptable for the one-level-at-a-time tree navigation pattern.
 - Existing tests all pass unchanged — the `_format_tree` changes are backward-compatible since `dir_summaries` defaults to `None`
+
+_Session duration: 4m 45s — 2026-02-17 14:54:35_
+
+---
+
+## Master Phase 6: Directory Summaries — Frontend
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+
+### Files Modified
+- `frontend/src/api/client.ts` — added `summary?: string | null` field to `TreeChild` interface
+- `frontend/src/pages/FileTree.tsx` — added summary text rendering for both file and directory rows: truncated inline text with `title` attribute for hover, graceful degradation when no summary exists. Added `shrink-0` to icons/names to prevent them from collapsing when summaries are long.
+
+### Test Results
+- 251/251 tests passing (no Python changes in this phase)
+- `cd frontend && npm run build` — succeeds, no TypeScript errors
+
+### Implementation Details
+- **File rows**: Summary text appears between filename and P/S/E badges, styled as `flex-1 min-w-0 truncate text-xs text-gray-500`. Only rendered when `child.summary` is truthy. `title={child.summary}` provides full text on hover.
+- **Directory rows**: Summary text appears between dir name and DirStats, same truncated style. Only rendered when `child.summary` is truthy.
+- **Graceful degradation**: Both file and directory rows render identically to before when no summary is present (conditional rendering with `&&`).
+
+### Notes
+- This is a frontend-only phase — no Python changes needed. The `/tree` API endpoint already returns the `summary` field (added in Phase 5).
+- Added `shrink-0` classes to icon and name elements so they don't compress when a long summary fills the flex container.

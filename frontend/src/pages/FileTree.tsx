@@ -47,9 +47,14 @@ function TreeNode({ child, parentPath, isExpanded, expandedPaths, onToggle }: Tr
         to={`/files/${fullPath}`}
         className="flex items-center gap-2 py-1 px-2 hover:bg-gray-800 rounded text-sm group"
       >
-        <FileText size={14} className="text-gray-500" />
-        <span className="text-gray-300 group-hover:text-white">{child.name}</span>
-        <span className="flex gap-1 ml-auto">
+        <FileText size={14} className="text-gray-500 shrink-0" />
+        <span className="text-gray-300 group-hover:text-white shrink-0">{child.name}</span>
+        {child.summary && (
+          <span className="flex-1 min-w-0 truncate text-xs text-gray-500" title={child.summary}>
+            {child.summary}
+          </span>
+        )}
+        <span className="flex gap-1 ml-auto shrink-0">
           <Badge ok={child.parsed ?? false} label="P" />
           <Badge ok={child.summarized ?? false} label="S" />
           <Badge ok={child.embedded ?? false} label="E" />
@@ -64,9 +69,14 @@ function TreeNode({ child, parentPath, isExpanded, expandedPaths, onToggle }: Tr
         onClick={() => onToggle(fullPath)}
         className="flex items-center gap-1 py-1 px-2 hover:bg-gray-800 rounded text-sm w-full text-left"
       >
-        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <Folder size={14} className="text-yellow-500" />
-        <span className="text-gray-200">{child.name}/</span>
+        {isExpanded ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
+        <Folder size={14} className="text-yellow-500 shrink-0" />
+        <span className="text-gray-200 shrink-0">{child.name}/</span>
+        {child.summary && (
+          <span className="flex-1 min-w-0 truncate text-xs text-gray-500" title={child.summary}>
+            {child.summary}
+          </span>
+        )}
         <DirStats child={child} />
       </button>
       {isExpanded && (
