@@ -184,6 +184,33 @@ def get_tree(path: str = ""):
             if f in embedded_files:
                 children[dirname]["embedded"] += 1
 
+    # Batch-fetch summaries for file and directory children
+    file_children = [
+        (prefix or "") + c["name"] for c in children.values() if c["type"] == "file"
+    ]
+    dir_children = [
+        ((prefix or "") + c["name"]).rstrip("/") for c in children.values() if c["type"] == "directory"
+    ]
+
+    file_summary_map: dict[str, str] = {}
+    if file_children:
+        for fp in file_children:
+            row = store.get_file_summary(fp)
+            if row:
+                file_summary_map[fp] = row["summary"]
+
+    dir_summary_map: dict[str, str] = {}
+    if dir_children:
+        dir_summary_map = store.get_directory_summaries(dir_children)
+
+    # Attach summaries to children
+    for child in children.values():
+        full_path = (prefix or "") + child["name"]
+        if child["type"] == "file":
+            child["summary"] = file_summary_map.get(full_path)
+        else:
+            child["summary"] = dir_summary_map.get(full_path.rstrip("/"))
+
     return {
         "path": path,
         "children": sorted(children.values(), key=lambda c: (c["type"] == "file", c["name"])),
@@ -435,6 +462,32 @@ def run_summarize_op(req: RunRequest = RunRequest()):
 
     task_id = _task_manager.submit("summarize", _run, path_filter=req.path_filter)
     return {"task_id": task_id, "name": "summarize", "status": "running"}
+
+
+@router.post("/run/summarize-dirs")
+def run_summarize_dirs_op():
+    """Trigger directory summarization in background."""
+    if _task_manager.has_running_task():
+        raise HTTPException(status_code=409, detail="A task is already running")
+
+    if not config.GEMINI_API_KEY:
+        raise HTTPException(status_code=400, detail="GEMINI_API_KEY not configured")
+
+    from indiseek.indexer.pipeline import run_summarize_dirs
+    from indiseek.storage.sqlite_store import SqliteStore
+
+    def _run():
+        store = SqliteStore(config.SQLITE_PATH)
+        store.init_db()
+        result = run_summarize_dirs(
+            store,
+            on_progress=_make_progress_callback(task_id),
+        )
+        store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
+        return result
+
+    task_id = _task_manager.submit("summarize-dirs", _run)
+    return {"task_id": task_id, "name": "summarize-dirs", "status": "running"}
 
 
 @router.post("/run/lexical")

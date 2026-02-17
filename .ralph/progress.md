@@ -399,3 +399,31 @@ _Session duration: 3m 57s — 2026-02-17 14:44:56_
 - The `Summarizer` class now has two separate system prompts: `SYSTEM_PROMPT` for files and `DIR_SYSTEM_PROMPT` for directories
 - Directory summaries prompt includes both "Files:" and "Subdirectories:" sections showing child names with their summaries
 - Error handling matches the file summarizer pattern: auth errors abort immediately, 5 consecutive failures abort
+
+_Session duration: 4m 54s — 2026-02-17 14:49:50_
+
+---
+
+## Master Phase 5: Directory Summaries — API + read_map
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+
+### Files Modified
+- `src/indiseek/api/dashboard.py` — added `POST /run/summarize-dirs` endpoint (follows same TaskManager pattern as `/run/summarize`), enhanced `/tree` endpoint to batch-fetch and include `summary` field (string or null) for both file and directory children
+- `src/indiseek/tools/read_map.py` — updated `_format_tree` to accept `dir_summaries` dict and render directory lines as `dirname/ — summary` when available, updated `read_map` to fetch all directory summaries and pass to formatter, graceful fallback when no directory summaries exist
+- `tests/test_tools.py` — added 4 new read_map tests: `test_directory_summaries_annotate_dirs`, `test_directory_summaries_nested`, `test_no_directory_summaries_graceful`, `test_directory_summaries_scoped`
+- `docs/plans/master.md` — marked all Phase 5 items complete
+
+### Test Results
+- 251/251 tests passing (247 existing + 4 new)
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **`/run/summarize-dirs` endpoint**: Follows exact same pattern as other `/run/*` endpoints — guards with `has_running_task()` and `GEMINI_API_KEY`, creates fresh `SqliteStore` in background thread, calls `run_summarize_dirs()` from pipeline.py, updates `last_index_at` metadata
+- **`/tree` endpoint enhancement**: After building the one-level children dict, batch-fetches file summaries (via `get_file_summary()` per file) and directory summaries (via `get_directory_summaries()` batch). Adds `summary` field (string or null) to every child in the response
+- **`read_map` enhancement**: Fetches all directory paths from `get_all_directory_paths_from_summaries()`, batch-fetches summaries via `get_directory_summaries()`, passes the dict to `_format_tree`. The `_format_tree` function tracks `current_path` through recursion to match directory paths against the summary dict. Directories without summaries render as before (`dirname/`)
+
+### Notes
+- The `/tree` endpoint uses individual `get_file_summary()` calls for file children rather than a batch method because the existing store API doesn't have a batch file summary lookup by exact paths (only `get_file_summaries(directory=...)` with prefix matching). This is acceptable for the one-level-at-a-time tree navigation pattern.
+- Existing tests all pass unchanged — the `_format_tree` changes are backward-compatible since `dir_summaries` defaults to `None`

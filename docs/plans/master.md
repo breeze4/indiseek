@@ -136,22 +136,22 @@ Expose directory summaries through the dashboard API and enhance the `read_map` 
 **Implementation:**
 
 In `src/indiseek/api/dashboard.py`:
-- [ ] Add `POST /dashboard/api/run/summarize-dirs` endpoint (or extend existing summarize endpoint)
-- [ ] Follows same pattern as `/run/summarize` — creates summarizer, calls `summarize_directories()`
+- [x] Add `POST /dashboard/api/run/summarize-dirs` endpoint (or extend existing summarize endpoint)
+- [x] Follows same pattern as `/run/summarize` — creates summarizer, calls `summarize_directories()`
 
 In `src/indiseek/api/dashboard.py` (`/tree` endpoint):
-- [ ] After building children dict, batch-fetch file summaries for file children
-- [ ] Batch-fetch directory summaries for directory children
-- [ ] Add `summary` field (string or null) to each child in the response
+- [x] After building children dict, batch-fetch file summaries for file children
+- [x] Batch-fetch directory summaries for directory children
+- [x] Add `summary` field (string or null) to each child in the response
 
 In `src/indiseek/tools/read_map.py`:
-- [ ] Look up directory summaries via `store.get_directory_summaries()` (batch)
-- [ ] Modify `_format_tree` so directory lines render as `dirname/ — summary` instead of just `dirname/`
-- [ ] Fall back gracefully if no directory summaries exist
+- [x] Look up directory summaries via `store.get_directory_summaries()` (batch)
+- [x] Modify `_format_tree` so directory lines render as `dirname/ — summary` instead of just `dirname/`
+- [x] Fall back gracefully if no directory summaries exist
 
 **Verify:**
-- [ ] `pytest` passes
-- [ ] `ruff check src/` clean
+- [x] `pytest` passes
+- [x] `ruff check src/` clean
 
 ---
 

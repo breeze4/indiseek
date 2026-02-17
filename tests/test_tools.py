@@ -263,6 +263,53 @@ class TestReadMap:
         assert "b/" in result
         assert "Deep file" in result
 
+    def test_directory_summaries_annotate_dirs(self, store):
+        """Directory summaries show after directory names."""
+        store.insert_file_summaries([
+            ("src/main.ts", "Main entry", "ts", 10),
+            ("src/utils.ts", "Utilities", "ts", 5),
+            ("lib/helper.ts", "Helpers", "ts", 3),
+        ])
+        store.insert_directory_summary("src", "Source code directory")
+        store.insert_directory_summary("lib", "Library modules")
+        result = read_map(store)
+        assert "src/ — Source code directory" in result
+        assert "lib/ — Library modules" in result
+
+    def test_directory_summaries_nested(self, store):
+        """Nested directory summaries work correctly."""
+        store.insert_file_summaries([
+            ("a/b/c.ts", "Deep file", "ts", 1),
+            ("a/d.ts", "Shallow file", "ts", 1),
+        ])
+        store.insert_directory_summary("a", "Top level")
+        store.insert_directory_summary("a/b", "Nested level")
+        result = read_map(store)
+        assert "a/ — Top level" in result
+        assert "b/ — Nested level" in result
+
+    def test_no_directory_summaries_graceful(self, store):
+        """Without directory summaries, dirs still show without annotation."""
+        store.insert_file_summaries([
+            ("src/main.ts", "Main entry", "ts", 10),
+        ])
+        result = read_map(store)
+        # Should have directory without summary annotation
+        assert "src/" in result
+        assert "src/ —" not in result
+
+    def test_directory_summaries_scoped(self, store):
+        """Directory summaries work with scoped read_map."""
+        store.insert_file_summaries([
+            ("src/components/button.ts", "Button component", "ts", 5),
+            ("src/components/input.ts", "Input component", "ts", 5),
+            ("src/utils.ts", "Utilities", "ts", 3),
+        ])
+        store.insert_directory_summary("src/components", "UI components")
+        result = read_map(store, path="src")
+        assert "components/ — UI components" in result
+        assert "utils.ts" in result
+
 
 # ── search_code format_results tests ──
 

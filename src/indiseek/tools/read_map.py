@@ -5,7 +5,13 @@ from __future__ import annotations
 from indiseek.storage.sqlite_store import SqliteStore
 
 
-def _format_tree(tree: dict, prefix: str = "", is_root: bool = True) -> str:
+def _format_tree(
+    tree: dict,
+    prefix: str = "",
+    is_root: bool = True,
+    dir_summaries: dict[str, str] | None = None,
+    current_path: str = "",
+) -> str:
     """Recursively format a nested dict as a readable tree with summaries."""
     lines: list[str] = []
     items = sorted(tree.items())
@@ -15,8 +21,16 @@ def _format_tree(tree: dict, prefix: str = "", is_root: bool = True) -> str:
         child_prefix = "" if is_root else (prefix + ("    " if is_last else "│   "))
 
         if isinstance(value, dict):
-            lines.append(f"{prefix}{connector}{name}/")
-            lines.append(_format_tree(value, child_prefix, is_root=False))
+            dir_path = f"{current_path}/{name}".lstrip("/") if current_path else name
+            summary = dir_summaries.get(dir_path) if dir_summaries else None
+            if summary:
+                lines.append(f"{prefix}{connector}{name}/ — {summary}")
+            else:
+                lines.append(f"{prefix}{connector}{name}/")
+            lines.append(_format_tree(
+                value, child_prefix, is_root=False,
+                dir_summaries=dir_summaries, current_path=dir_path,
+            ))
         else:
             # value is the summary string
             lines.append(f"{prefix}{connector}{name} — {value}")
@@ -53,4 +67,8 @@ def read_map(store: SqliteStore, path: str | None = None) -> str:
             return "No file summaries available. Run indexing with --summarize first."
         header = "Repository map:\n\n"
 
-    return header + _format_tree(tree)
+    # Fetch directory summaries for annotating directory lines
+    dir_paths = list(store.get_all_directory_paths_from_summaries())
+    dir_summaries = store.get_directory_summaries(dir_paths) if dir_paths else {}
+
+    return header + _format_tree(tree, dir_summaries=dir_summaries)
