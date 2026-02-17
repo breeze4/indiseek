@@ -115,6 +115,29 @@ export interface QueryResult {
   evidence: QueryEvidence[]
 }
 
+export interface QueryCachedResponse {
+  cached: true
+  query_id: number
+  source_query_id: number
+  answer: string
+  evidence: QueryEvidence[]
+}
+
+export interface QueryHistoryItem {
+  id: number
+  prompt: string
+  status: 'running' | 'completed' | 'failed' | 'cached'
+  created_at: string
+  duration_secs: number | null
+}
+
+export interface QueryHistoryDetail extends QueryHistoryItem {
+  answer: string | null
+  evidence: QueryEvidence[] | null
+  error: string | null
+  completed_at: string | null
+}
+
 // API functions
 
 export const fetchStats = () => apiFetch<Stats>('/stats')
@@ -142,12 +165,18 @@ export const runOperation = (name: string, body?: Record<string, unknown>) =>
     body: JSON.stringify(body ?? {}),
   })
 
-export const runQuery = (prompt: string) =>
-  apiFetch<RunResponse>('/run/query', {
+export const runQuery = (prompt: string, force?: boolean) =>
+  apiFetch<RunResponse | QueryCachedResponse>('/run/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, ...(force ? { force: true } : {}) }),
   })
+
+export const fetchQueryHistory = () =>
+  apiFetch<QueryHistoryItem[]>('/queries')
+
+export const fetchQueryDetail = (id: number) =>
+  apiFetch<QueryHistoryDetail>(`/queries/${id}`)
 
 export function createTaskStream(taskId: string): EventSource {
   return new EventSource(`${API_BASE}/tasks/${taskId}/stream`)

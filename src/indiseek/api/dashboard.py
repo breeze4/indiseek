@@ -6,6 +6,7 @@ import json
 import logging
 import queue
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -314,6 +315,7 @@ def search_code(
 
 class QueryRequest(BaseModel):
     prompt: str
+    force: bool = False
 
 
 class RunRequest(BaseModel):
@@ -343,10 +345,12 @@ def run_treesitter_op(req: RunRequest = RunRequest()):
     def _run(path_filter=None):
         store = SqliteStore(config.SQLITE_PATH)
         store.init_db()
-        return run_treesitter(
+        result = run_treesitter(
             store, config.REPO_PATH, path_filter=path_filter,
             on_progress=_make_progress_callback(task_id),
         )
+        store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
+        return result
 
     task_id = _task_manager.submit("treesitter", _run, path_filter=req.path_filter)
     return {"task_id": task_id, "name": "treesitter", "status": "running"}
@@ -366,10 +370,12 @@ def run_scip_op(req: RunScipRequest = RunScipRequest()):
     def _run():
         store = SqliteStore(config.SQLITE_PATH)
         store.init_db()
-        return run_scip(
+        result = run_scip(
             store, scip_path,
             on_progress=_make_progress_callback(task_id),
         )
+        store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
+        return result
 
     task_id = _task_manager.submit("scip", _run)
     return {"task_id": task_id, "name": "scip", "status": "running"}
@@ -393,10 +399,12 @@ def run_embed_op(req: RunRequest = RunRequest()):
         store.init_db()
         vs = VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS)
         embedder = Embedder(store, vs)
-        return {"embedded": embedder.embed_all_chunks(
+        result = {"embedded": embedder.embed_all_chunks(
             path_filter=path_filter,
             on_progress=_make_progress_callback(task_id),
         )}
+        store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
+        return result
 
     task_id = _task_manager.submit("embed", _run, path_filter=req.path_filter)
     return {"task_id": task_id, "name": "embed", "status": "running"}
@@ -418,10 +426,12 @@ def run_summarize_op(req: RunRequest = RunRequest()):
         store = SqliteStore(config.SQLITE_PATH)
         store.init_db()
         summarizer = Summarizer(store)
-        return {"summarized": summarizer.summarize_repo(
+        result = {"summarized": summarizer.summarize_repo(
             config.REPO_PATH, path_filter=path_filter,
             on_progress=_make_progress_callback(task_id),
         )}
+        store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
+        return result
 
     task_id = _task_manager.submit("summarize", _run, path_filter=req.path_filter)
     return {"task_id": task_id, "name": "summarize", "status": "running"}
@@ -439,10 +449,12 @@ def run_lexical_op():
     def _run():
         store = SqliteStore(config.SQLITE_PATH)
         store.init_db()
-        return run_lexical(
+        result = run_lexical(
             store, config.TANTIVY_PATH,
             on_progress=_make_progress_callback(task_id),
         )
+        store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
+        return result
 
     task_id = _task_manager.submit("lexical", _run)
     return {"task_id": task_id, "name": "lexical", "status": "running"}
@@ -451,29 +463,114 @@ def run_lexical_op():
 @router.post("/run/query")
 def run_query_op(req: QueryRequest):
     """Submit a natural language query to the agent loop in background."""
-    if _task_manager.has_running_task():
-        raise HTTPException(status_code=409, detail="A task is already running")
-
     if not config.GEMINI_API_KEY:
         raise HTTPException(status_code=400, detail="GEMINI_API_KEY not configured")
 
-    from indiseek.agent.loop import create_agent_loop
+    from indiseek.storage.sqlite_store import SqliteStore
 
     prompt = req.prompt
+    store = SqliteStore(config.SQLITE_PATH)
+    store.init_db()
+
+    # Cache check (skip if force=True)
+    if not req.force:
+        from indiseek.tools.search_code import compute_query_similarity
+
+        last_index_at = store.get_metadata("last_index_at")
+        candidates = store.get_completed_queries_since(last_index_at)
+        best_match = None
+        best_sim = 0.0
+        for cand in candidates:
+            sim = compute_query_similarity(prompt, cand["prompt"])
+            if sim >= 0.8 and sim > best_sim:
+                best_sim = sim
+                best_match = cand
+        if best_match:
+            evidence_json = best_match["evidence"] or "[]"
+            new_id = store.insert_cached_query(
+                prompt, best_match["answer"] or "",
+                evidence_json, best_match["id"],
+                best_match["duration_secs"] or 0.0,
+            )
+            try:
+                evidence = json.loads(evidence_json)
+            except (json.JSONDecodeError, TypeError):
+                evidence = []
+            logger.info(
+                "Cache hit: query %d matched query %d (sim=%.2f)",
+                new_id, best_match["id"], best_sim,
+            )
+            return {
+                "cached": True,
+                "query_id": new_id,
+                "source_query_id": best_match["id"],
+                "answer": best_match["answer"],
+                "evidence": evidence,
+            }
+
+    if _task_manager.has_running_task():
+        raise HTTPException(status_code=409, detail="A task is already running")
+
+    from indiseek.agent.loop import create_agent_loop
+
+    # Persist query in SQLite
+    query_id = store.insert_query(prompt)
 
     def _run():
-        agent = create_agent_loop()
-        result = agent.run(prompt, on_progress=_make_progress_callback(task_id))
-        return {
-            "answer": result.answer,
-            "evidence": [
+        import time
+        qstore = SqliteStore(config.SQLITE_PATH)
+        qstore.init_db()
+        start = time.monotonic()
+        try:
+            agent = create_agent_loop()
+            result = agent.run(prompt, on_progress=_make_progress_callback(task_id))
+            duration = time.monotonic() - start
+            evidence = [
                 {"tool": e.tool, "args": e.args, "summary": e.summary}
                 for e in result.evidence
-            ],
-        }
+            ]
+            qstore.complete_query(
+                query_id, result.answer, json.dumps(evidence), duration,
+            )
+            return {
+                "query_id": query_id,
+                "answer": result.answer,
+                "evidence": evidence,
+            }
+        except Exception as exc:
+            duration = time.monotonic() - start
+            qstore.fail_query(query_id, str(exc))
+            raise
 
     task_id = _task_manager.submit("query", _run)
-    return {"task_id": task_id, "name": "query", "status": "running"}
+    return {"task_id": task_id, "name": "query", "status": "running", "query_id": query_id}
+
+
+# ── Query history ──
+
+
+@router.get("/queries")
+def list_queries():
+    """List recent queries (without answer/evidence)."""
+    store = _get_sqlite_store()
+    if not store:
+        return []
+    try:
+        return store.list_queries()
+    except Exception:
+        return []
+
+
+@router.get("/queries/{query_id}")
+def get_query(query_id: int):
+    """Get full query detail including answer and evidence."""
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=503, detail="SQLite store not available")
+    row = store.get_query(query_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Query not found")
+    return row
 
 
 # ── Task status ──

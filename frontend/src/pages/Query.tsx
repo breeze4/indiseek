@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { useRunQuery, useTaskStream } from '../api/hooks.ts'
+import { useQueryClient } from '@tanstack/react-query'
+import { useRunQuery, useTaskStream, useQueryHistory, useQueryDetail } from '../api/hooks.ts'
 import type { StreamEvent } from '../api/hooks.ts'
-import type { QueryResult, QueryEvidence } from '../api/client.ts'
+import type { QueryResult, QueryEvidence, QueryCachedResponse } from '../api/client.ts'
 
 function ProgressLog({ events }: { events: StreamEvent[] }) {
   const endRef = useRef<HTMLDivElement>(null)
@@ -69,12 +70,40 @@ function EvidenceTrail({ evidence }: { evidence: QueryEvidence[] }) {
   )
 }
 
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const cls =
+    status === 'completed'
+      ? 'bg-green-900/50 text-green-400'
+      : status === 'failed'
+        ? 'bg-red-900/50 text-red-400'
+        : status === 'cached'
+          ? 'bg-purple-900/50 text-purple-400'
+          : 'bg-blue-900/50 text-blue-400'
+  return <span className={`text-[10px] px-1.5 py-0.5 rounded ${cls}`}>{status}</span>
+}
+
 export default function Query() {
   const [prompt, setPrompt] = useState('')
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
   const [result, setResult] = useState<QueryResult | null>(null)
+  const [selectedQueryId, setSelectedQueryId] = useState<number>(0)
+  const [isCachedResult, setIsCachedResult] = useState(false)
   const runQuery = useRunQuery()
   const { events, done } = useTaskStream(activeTaskId)
+  const queryClient = useQueryClient()
+  const { data: history } = useQueryHistory()
+  const { data: historyDetail } = useQueryDetail(selectedQueryId)
 
   const isRunning = activeTaskId !== null && !done
 
@@ -85,98 +114,189 @@ export default function Query() {
     if (doneEvent?.result) {
       setResult(doneEvent.result as QueryResult)
     }
-  }, [done, events])
+    // Refresh history list when a query completes
+    queryClient.invalidateQueries({ queryKey: ['queryHistory'] })
+  }, [done, events, queryClient])
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent, force?: boolean) {
     e.preventDefault()
     if (!prompt.trim() || isRunning) return
 
     setResult(null)
     setActiveTaskId(null)
-    runQuery.mutate(prompt.trim(), {
+    setSelectedQueryId(0)
+    setIsCachedResult(false)
+    runQuery.mutate({ prompt: prompt.trim(), force }, {
       onSuccess: (data) => {
-        setActiveTaskId(data.task_id)
+        if ('cached' in data && data.cached) {
+          const cached = data as QueryCachedResponse
+          setResult({ answer: cached.answer, evidence: cached.evidence })
+          setIsCachedResult(true)
+          queryClient.invalidateQueries({ queryKey: ['queryHistory'] })
+        } else {
+          setActiveTaskId((data as { task_id: string }).task_id)
+          queryClient.invalidateQueries({ queryKey: ['queryHistory'] })
+        }
       },
     })
   }
 
-  const hasError = done && events.some((e) => e.type === 'error')
-  const errorMessage = hasError
-    ? String(events.find((e) => e.type === 'error')?.error ?? 'Unknown error')
+  function handleSelectHistory(id: number) {
+    // Clear active task state, load from history
+    setActiveTaskId(null)
+    setResult(null)
+    setSelectedQueryId(id)
+    setIsCachedResult(false)
+    // Set prompt from history so Re-run works
+    const item = history?.find((q) => q.id === id)
+    if (item) setPrompt(item.prompt)
+  }
+
+  // When history detail loads, show it as the result
+  const displayResult = selectedQueryId > 0 && historyDetail
+    ? historyDetail.answer
+      ? { answer: historyDetail.answer, evidence: historyDetail.evidence ?? [] }
+      : null
+    : result
+
+  const displayError = selectedQueryId > 0 && historyDetail?.status === 'failed'
+    ? historyDetail.error ?? 'Unknown error'
     : null
 
-  return (
-    <div>
-      <h2 className="text-xl font-bold mb-4">Query</h2>
+  const showCached = isCachedResult ||
+    (selectedQueryId > 0 && historyDetail?.status === 'cached')
 
-      <form onSubmit={handleSubmit} className="mb-6">
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder="Ask a question about the codebase..."
-          disabled={isRunning}
-          rows={3}
-          className="w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 resize-y disabled:opacity-50"
-        />
-        <div className="flex items-center gap-3 mt-2">
-          <button
-            type="submit"
-            disabled={!prompt.trim() || isRunning}
-            className={`px-4 py-1.5 rounded text-sm font-medium ${
-              !prompt.trim() || isRunning
-                ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
-                : 'bg-blue-600 hover:bg-blue-700 text-white'
-            }`}
-          >
-            {isRunning ? 'Running...' : 'Submit'}
-          </button>
-          {isRunning && (
-            <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-          )}
-          {runQuery.isError && (
-            <span className="text-red-400 text-sm">
-              {(runQuery.error as Error).message}
-            </span>
+  const hasError = selectedQueryId === 0
+    ? done && events.some((e) => e.type === 'error')
+    : displayError !== null
+  const errorMessage = selectedQueryId === 0
+    ? hasError
+      ? String(events.find((e) => e.type === 'error')?.error ?? 'Unknown error')
+      : null
+    : displayError
+
+  return (
+    <div className="flex gap-6">
+      {/* History sidebar */}
+      <div className="w-64 shrink-0">
+        <h3 className="text-sm font-semibold text-gray-400 mb-3">History</h3>
+        <div className="space-y-1 max-h-[calc(100vh-12rem)] overflow-y-auto">
+          {history && history.length > 0 ? (
+            history.map((q) => (
+              <button
+                key={q.id}
+                onClick={() => handleSelectHistory(q.id)}
+                className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
+                  selectedQueryId === q.id
+                    ? 'bg-gray-800 text-gray-200'
+                    : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-300'
+                }`}
+              >
+                <div className="truncate text-xs">{q.prompt}</div>
+                <div className="flex items-center gap-2 mt-1">
+                  <StatusBadge status={q.status} />
+                  <span className="text-[10px] text-gray-600">{timeAgo(q.created_at)}</span>
+                  {q.duration_secs != null && (
+                    <span className="text-[10px] text-gray-600">{q.duration_secs.toFixed(1)}s</span>
+                  )}
+                </div>
+              </button>
+            ))
+          ) : (
+            <p className="text-xs text-gray-600 px-3">No queries yet</p>
           )}
         </div>
-      </form>
+      </div>
 
-      {/* Progress log */}
-      {activeTaskId && (
-        <div className="mb-6">
-          <div className="flex items-center gap-2 mb-2">
-            <h3 className="text-sm font-semibold text-gray-400">Progress</h3>
+      {/* Main content */}
+      <div className="flex-1 min-w-0">
+        <h2 className="text-xl font-bold mb-4">Query</h2>
+
+        <form onSubmit={handleSubmit} className="mb-6">
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Ask a question about the codebase..."
+            disabled={isRunning}
+            rows={3}
+            className="w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 resize-y disabled:opacity-50"
+          />
+          <div className="flex items-center gap-3 mt-2">
+            <button
+              type="submit"
+              disabled={!prompt.trim() || isRunning}
+              className={`px-4 py-1.5 rounded text-sm font-medium ${
+                !prompt.trim() || isRunning
+                  ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+              }`}
+            >
+              {isRunning ? 'Running...' : 'Submit'}
+            </button>
             {isRunning && (
               <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
             )}
-            {done && !hasError && (
-              <span className="text-green-400 text-xs">Complete</span>
-            )}
-            {hasError && (
-              <span className="text-red-400 text-xs">Failed</span>
+            {runQuery.isError && (
+              <span className="text-red-400 text-sm">
+                {(runQuery.error as Error).message}
+              </span>
             )}
           </div>
-          <ProgressLog events={events} />
-        </div>
-      )}
+        </form>
 
-      {/* Error */}
-      {hasError && (
-        <div className="mb-6 bg-red-950/50 border border-red-800 rounded p-4 text-red-300 text-sm">
-          {errorMessage}
-        </div>
-      )}
-
-      {/* Answer */}
-      {result && (
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
-          <h3 className="text-sm font-semibold text-gray-400 mb-3">Answer</h3>
-          <div className="text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">
-            {result.answer}
+        {/* Progress log (only for active task, not history) */}
+        {activeTaskId && selectedQueryId === 0 && (
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="text-sm font-semibold text-gray-400">Progress</h3>
+              {isRunning && (
+                <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+              )}
+              {done && !hasError && (
+                <span className="text-green-400 text-xs">Complete</span>
+              )}
+              {hasError && (
+                <span className="text-red-400 text-xs">Failed</span>
+              )}
+            </div>
+            <ProgressLog events={events} />
           </div>
-          <EvidenceTrail evidence={result.evidence} />
-        </div>
-      )}
+        )}
+
+        {/* Error */}
+        {hasError && errorMessage && (
+          <div className="mb-6 bg-red-950/50 border border-red-800 rounded p-4 text-red-300 text-sm">
+            {errorMessage}
+          </div>
+        )}
+
+        {/* Answer */}
+        {displayResult && (
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <h3 className="text-sm font-semibold text-gray-400">Answer</h3>
+              {showCached && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-400">
+                  cached
+                </span>
+              )}
+            </div>
+            <div className="text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">
+              {displayResult.answer}
+            </div>
+            <EvidenceTrail evidence={displayResult.evidence} />
+            {showCached && (
+              <button
+                onClick={(e) => handleSubmit(e, true)}
+                disabled={isRunning}
+                className="mt-4 px-3 py-1 rounded text-xs font-medium bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50"
+              >
+                Re-run without cache
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

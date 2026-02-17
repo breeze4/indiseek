@@ -9,8 +9,12 @@ import {
   fetchTasks,
   runOperation,
   runQuery,
+  fetchQueryHistory,
+  fetchQueryDetail,
   createTaskStream,
   type TaskInfo,
+  type QueryCachedResponse,
+  type RunResponse,
 } from './client.ts'
 
 export function useStats() {
@@ -67,10 +71,27 @@ export function useRunOperation() {
 export function useRunQuery() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (prompt: string) => runQuery(prompt),
+    mutationFn: ({ prompt, force }: { prompt: string; force?: boolean }) =>
+      runQuery(prompt, force),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
     },
+  })
+}
+
+export function useQueryHistory() {
+  return useQuery({
+    queryKey: ['queryHistory'],
+    queryFn: fetchQueryHistory,
+    refetchOnWindowFocus: true,
+  })
+}
+
+export function useQueryDetail(id: number) {
+  return useQuery({
+    queryKey: ['queryDetail', id],
+    queryFn: () => fetchQueryDetail(id),
+    enabled: id > 0,
   })
 }
 
@@ -123,4 +144,4 @@ export function useTaskStream(taskId: string | null) {
 }
 
 // Re-export types for convenience
-export type { TaskInfo }
+export type { TaskInfo, QueryCachedResponse, RunResponse }

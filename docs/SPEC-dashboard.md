@@ -99,7 +99,9 @@ Natural language query interface for the agent loop. Users submit a question, se
 - **Answer:** Rendered in a styled div with `whitespace-pre-wrap` when the agent finishes.
 - **Evidence trail:** Collapsible section showing each tool call with its summary.
 - **States:** idle (input only), running (input disabled, progress visible, pulsing dot), complete (answer + evidence, input re-enabled).
-- **Backend:** `POST /dashboard/api/run/query` submits the prompt to `AgentLoop.run()` via TaskManager. Returns 409 if a task is already running, 400 if GEMINI_API_KEY is not set.
+- **History:** Left sidebar showing past queries with status badges (running/completed/failed), relative timestamps, and duration. Clicking a past query loads its answer and evidence into the main view. Queries persist in SQLite across server restarts. `GET /dashboard/api/queries` returns the list (most recent first, limit 50), `GET /dashboard/api/queries/{id}` returns full detail including answer and evidence.
+- **Backend:** `POST /dashboard/api/run/query` submits the prompt to `AgentLoop.run()` via TaskManager. Returns 409 if a task is already running, 400 if GEMINI_API_KEY is not set. Query results are persisted in the `queries` SQLite table with prompt, answer, evidence (JSON), status, timestamps, and duration.
+- **Caching:** Before starting the agent loop, the endpoint checks for fuzzy-matching completed queries using Jaccard similarity (threshold 0.8). On cache hit, a new `queries` row is inserted with `status='cached'` and `source_query_id` pointing to the original, and the response is returned instantly (no TaskManager, no 409 conflict). Cache is invalidated when any indexing operation completes (tracked via `last_index_at` in the `metadata` table). The `force` parameter on the request body bypasses the cache. The frontend shows a purple "cached" badge and a "Re-run without cache" button for cached results.
 
 ## What This Is NOT
 

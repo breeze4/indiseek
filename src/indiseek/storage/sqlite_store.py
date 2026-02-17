@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -114,9 +116,33 @@ class SqliteStore:
                 line_count INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_summaries_path ON file_summaries(file_path);
+
+            CREATE TABLE IF NOT EXISTS queries (
+                id INTEGER PRIMARY KEY,
+                prompt TEXT NOT NULL,
+                answer TEXT,
+                evidence TEXT,
+                status TEXT NOT NULL DEFAULT 'running',
+                error TEXT,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                duration_secs REAL,
+                source_query_id INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
             """
         )
         self._conn.commit()
+        # Migrate: add source_query_id to existing queries table
+        cur.execute("PRAGMA table_info(queries)")
+        columns = {row[1] for row in cur.fetchall()}
+        if "source_query_id" not in columns:
+            cur.execute("ALTER TABLE queries ADD COLUMN source_query_id INTEGER")
+            self._conn.commit()
 
     def clear_index_data(self) -> None:
         """Delete all indexed data (symbols, chunks, SCIP) for a clean re-index."""
@@ -395,6 +421,114 @@ class SqliteStore:
             "chunks_deleted": cur_chunks.rowcount,
             "symbols_deleted": cur_symbols.rowcount,
         }
+
+    # ── Metadata ──
+
+    def set_metadata(self, key: str, value: str) -> None:
+        """Set a metadata key-value pair (INSERT OR REPLACE)."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        self._conn.commit()
+
+    def get_metadata(self, key: str) -> str | None:
+        """Get a metadata value by key, or None if not found."""
+        cur = self._conn.execute("SELECT value FROM metadata WHERE key = ?", (key,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    # ── Query history ──
+
+    def insert_query(self, prompt: str) -> int:
+        """Insert a new query with status='running'. Returns its id."""
+        now = datetime.now(timezone.utc).isoformat()
+        cur = self._conn.execute(
+            "INSERT INTO queries (prompt, status, created_at) VALUES (?, 'running', ?)",
+            (prompt, now),
+        )
+        self._conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def complete_query(
+        self, query_id: int, answer: str, evidence_json: str, duration_secs: float
+    ) -> None:
+        """Mark a query as completed with its answer and evidence."""
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """UPDATE queries
+               SET answer = ?, evidence = ?, status = 'completed',
+                   completed_at = ?, duration_secs = ?
+               WHERE id = ?""",
+            (answer, evidence_json, now, duration_secs, query_id),
+        )
+        self._conn.commit()
+
+    def fail_query(self, query_id: int, error: str) -> None:
+        """Mark a query as failed."""
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "UPDATE queries SET status = 'failed', error = ?, completed_at = ? WHERE id = ?",
+            (error, now, query_id),
+        )
+        self._conn.commit()
+
+    def list_queries(self, limit: int = 50) -> list[dict]:
+        """List recent queries (without answer/evidence for efficiency)."""
+        cur = self._conn.execute(
+            """SELECT id, prompt, status, created_at, duration_secs
+               FROM queries ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_completed_queries_since(self, after: str | None = None) -> list[dict]:
+        """Return completed queries, optionally only those completed after a timestamp."""
+        if after:
+            cur = self._conn.execute(
+                """SELECT id, prompt, answer, evidence, duration_secs
+                   FROM queries WHERE status = 'completed' AND completed_at > ?
+                   ORDER BY completed_at DESC""",
+                (after,),
+            )
+        else:
+            cur = self._conn.execute(
+                """SELECT id, prompt, answer, evidence, duration_secs
+                   FROM queries WHERE status = 'completed'
+                   ORDER BY completed_at DESC""",
+            )
+        return [dict(row) for row in cur.fetchall()]
+
+    def insert_cached_query(
+        self, prompt: str, answer: str, evidence_json: str,
+        source_query_id: int, duration_secs: float,
+    ) -> int:
+        """Insert a cached query entry pointing to its source."""
+        now = datetime.now(timezone.utc).isoformat()
+        cur = self._conn.execute(
+            """INSERT INTO queries
+               (prompt, answer, evidence, status, created_at, completed_at,
+                duration_secs, source_query_id)
+               VALUES (?, ?, ?, 'cached', ?, ?, ?, ?)""",
+            (prompt, answer, evidence_json, now, now, duration_secs, source_query_id),
+        )
+        self._conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def get_query(self, query_id: int) -> dict | None:
+        """Get full query details including answer and evidence."""
+        cur = self._conn.execute("SELECT * FROM queries WHERE id = ?", (query_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        # Parse evidence JSON back to list
+        if result.get("evidence"):
+            try:
+                result["evidence"] = json.loads(result["evidence"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return result
 
     # ── Counts ──
 
