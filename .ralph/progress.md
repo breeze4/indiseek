@@ -337,3 +337,32 @@ _Session duration: 2m 59s — 2026-02-17 14:19:33_
 ### Notes
 - The standalone `read_file()` function in `src/indiseek/tools/read_file.py` is unchanged — it still reads from disk. Only the agent loop's handler was refactored. The standalone function is used for direct tool usage outside the agent loop.
 - Pre-existing ruff warnings in test files (unused imports in test_parser.py, test_summarizer.py, test_tools.py) were not addressed as they are out of scope.
+
+_Session duration: 5m 56s — 2026-02-17 14:40:35_
+
+---
+
+## Master Phase 3: Search Previews + Iteration Budget
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+**Commit**: `24da075`
+
+### Files Modified
+- `src/indiseek/agent/loop.py` — updated read_file tool description (200→500 line cap), reduced MAX_ITERATIONS (15→12), SYNTHESIS_PHASE (13→10), reflection hint trigger (iteration 10→8), system prompt budget guidance (8-10→7-8 iterations)
+- `src/indiseek/tools/search_code.py` — updated `format_results()` to give top 3 results longer previews (600 chars / 15 lines) while keeping results 4+ at 300 chars / 8 lines
+- `tests/test_agent.py` — updated `test_max_iterations` assertion (15→12), `test_system_prompt_includes_repo_map` assertion (15→12 iterations)
+- `tests/test_tools.py` — increased `test_truncates_long_content` content to 700 chars, added `test_top_results_get_longer_previews`
+
+### Test Results
+- 234/234 tests passing
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **Line cap documentation**: The read_file tool description in TOOL_DECLARATIONS now correctly says "500 lines" matching the actual DEFAULT_LINE_CAP (which was already 500)
+- **Tighter iteration budget**: MAX_ITERATIONS reduced from 15 to 12, synthesis phase from 13 to 10, reflection hint at iteration 8, system prompt guides agent to wrap up by iteration 8
+- **Tiered search previews**: Top 3 search results get 600 chars / 15 lines for richer context; results 4+ keep the original 300 chars / 8 lines
+
+### Notes
+- `test_budget_injected_into_evidence` did not need updating — it tests the evidence summary format ("Map: src"), not the iteration string
+- The `test_top_results_get_longer_previews` test verifies the tiered behavior: 400-char content is NOT truncated in result 1 (top-3, 600 limit) but IS truncated in result 4 (300 limit)

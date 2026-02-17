@@ -195,13 +195,18 @@ def format_results(results: list[HybridResult], query: str) -> str:
         symbol_info = f" [{r.symbol_name}]" if r.symbol_name else ""
         lines.append(f"  {i}. {r.file_path}{symbol_info} ({r.chunk_type}, {r.match_type})")
         lines.append(f"     Score: {r.score:.4f}")
+        # Top 3 results get longer previews for more context
+        if i <= 3:
+            max_chars, max_lines = 600, 15
+        else:
+            max_chars, max_lines = 300, 8
         # Show a truncated content preview
         preview = r.content.strip()
-        if len(preview) > 300:
-            preview = preview[:300] + "..."
-        for pl in preview.splitlines()[:8]:
+        if len(preview) > max_chars:
+            preview = preview[:max_chars] + "..."
+        for pl in preview.splitlines()[:max_lines]:
             lines.append(f"     | {pl}")
-        if len(preview.splitlines()) > 8:
+        if len(preview.splitlines()) > max_lines:
             lines.append(f"     | ... ({len(preview.splitlines())} lines total)")
         lines.append("")
 

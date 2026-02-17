@@ -69,26 +69,26 @@ Fix the line cap documentation mismatch, give top search results longer previews
 **Implementation:**
 
 In `src/indiseek/agent/loop.py`:
-- [ ] Change `"Output is capped at 200 lines"` → `"Output is capped at 500 lines"` (line ~160)
-- [ ] `MAX_ITERATIONS = 15` → `12`
-- [ ] `SYNTHESIS_PHASE = 13` → `10`
-- [ ] Reflection hint: trigger at iteration 8 instead of 10
-- [ ] System prompt: `"at most 8-10 iterations"` → `"at most 7-8 iterations"`
+- [x] Change `"Output is capped at 200 lines"` → `"Output is capped at 500 lines"` (line ~160)
+- [x] `MAX_ITERATIONS = 15` → `12`
+- [x] `SYNTHESIS_PHASE = 13` → `10`
+- [x] Reflection hint: trigger at iteration 8 instead of 10
+- [x] System prompt: `"at most 8-10 iterations"` → `"at most 7-8 iterations"`
 
 In `src/indiseek/tools/search_code.py` `format_results()`:
-- [ ] Top 3 results: 600 chars / 15 lines preview
-- [ ] Results 4+: 300 chars / 8 lines (current behavior)
+- [x] Top 3 results: 600 chars / 15 lines preview
+- [x] Results 4+: 300 chars / 8 lines (current behavior)
 
 Tests:
-- [ ] `test_truncates_long_content` — increase test content to 700 chars
-- [ ] Add `test_top_results_get_longer_previews`
-- [ ] `test_max_iterations`: `== 15` → `== 12`
-- [ ] `test_budget_injected_into_evidence`: `"Iteration 1/15"` → `"Iteration 1/12"`
-- [ ] `test_system_prompt_includes_repo_map`: `"15 iterations"` → `"12 iterations"`
+- [x] `test_truncates_long_content` — increase test content to 700 chars
+- [x] Add `test_top_results_get_longer_previews`
+- [x] `test_max_iterations`: `== 15` → `== 12`
+- [x] `test_budget_injected_into_evidence`: `"Iteration 1/15"` → `"Iteration 1/12"`
+- [x] `test_system_prompt_includes_repo_map`: `"15 iterations"` → `"12 iterations"`
 
 **Verify:**
-- [ ] `pytest` passes
-- [ ] `ruff check src/` clean
+- [x] `pytest` passes
+- [x] `ruff check src/` clean
 
 ---
 

@@ -28,8 +28,8 @@ from indiseek.tools.search_code import (
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 15
-SYNTHESIS_PHASE = 13  # iteration index where we force text-only (0-based)
+MAX_ITERATIONS = 12
+SYNTHESIS_PHASE = 10  # iteration index where we force text-only (0-based)
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are a codebase research agent. Your job is to answer questions about a codebase \
@@ -94,8 +94,8 @@ If asked "How is the dev server created?", a good first turn might be:
 
 ## Budget
 You have {max_iterations} iterations. Each iteration is one round of tool calls. \
-Plan to use at most 8-10 iterations for research, then synthesize your answer. \
-If you're past iteration 10, stop researching and write your answer with what you have.
+Plan to use at most 7-8 iterations for research, then synthesize your answer. \
+If you're past iteration 8, stop researching and write your answer with what you have.
 
 Be thorough but efficient. Don't read entire files when a targeted search suffices. \
 Don't repeat a search you've already done. Synthesize your findings into a clear, \
@@ -163,7 +163,7 @@ TOOL_DECLARATIONS = [
     types.FunctionDeclaration(
         name="read_file",
         description="Read source code from the repository with line numbers. "
-        "Output is capped at 200 lines by default. Use start_line and end_line "
+        "Output is capped at 500 lines by default. Use start_line and end_line "
         "to read a specific range of a large file.",
         parameters_json_schema={
             "type": "object",
@@ -360,9 +360,9 @@ class AgentLoop:
                 "is more accurate than searching for symbol names. Try it now."
             )
         
-        if iteration == 10:
+        if iteration == 8:
             hints.append(
-                "You are at iteration 10/15. Review your collected evidence. "
+                "You are at iteration 8/12. Review your collected evidence. "
                 "If you have enough to answer, synthesize now. Otherwise, focus "
                 "on the single most critical piece of information remaining."
             )

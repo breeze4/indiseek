@@ -299,13 +299,32 @@ class TestSearchCodeFormatting:
                 file_path="src/big.ts",
                 symbol_name=None,
                 chunk_type="module",
-                content="x" * 500,
+                content="x" * 700,
                 score=0.5,
                 match_type="lexical",
             ),
         ]
         formatted = format_results(results, "query")
         assert "..." in formatted
+
+    def test_top_results_get_longer_previews(self):
+        """Top 3 results get 600 char / 15 line previews; result 4+ gets 300 / 8."""
+        # Content that is 400 chars — within top-3 limit (600) but over result-4+ limit (300)
+        content_400 = "a" * 400
+        results = [
+            HybridResult(chunk_id=i, file_path=f"f{i}.ts", symbol_name=None,
+                         chunk_type="module", content=content_400, score=1.0 - i * 0.1,
+                         match_type="lexical")
+            for i in range(1, 6)
+        ]
+        formatted = format_results(results, "query")
+        lines = formatted.split("\n")
+        # Find the preview lines for result 1 (top-3): should NOT be truncated
+        r1_section = formatted.split("1. f1.ts")[1].split("2. f2.ts")[0]
+        assert "..." not in r1_section
+        # Find the preview lines for result 4 (4+): should be truncated at 300
+        r4_section = formatted.split("4. f4.ts")[1].split("5. f5.ts")[0]
+        assert "..." in r4_section
 
     def test_no_symbol_name(self):
         results = [
