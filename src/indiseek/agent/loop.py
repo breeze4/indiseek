@@ -302,33 +302,33 @@ class AgentLoop:
             file_path = args["path"]
             start_line = args.get("start_line")
             end_line = args.get("end_line")
-            
+
+            # Enforce minimum read window: if range < 100 lines, expand to
+            # 150 lines centered on the midpoint of the requested range.
+            if start_line is not None and end_line is not None:
+                span = end_line - start_line + 1
+                if span < 100:
+                    mid = (start_line + end_line) // 2
+                    start_line = max(1, mid - 75)
+                    end_line = start_line + 149
+                    logger.debug(
+                        "  read_file: expanded range to %d-%d (150 lines)",
+                        start_line, end_line,
+                    )
+
             if file_path in self._file_cache:
                 logger.debug("  file cache hit: %s", file_path)
                 content = self._file_cache[file_path]
                 result = format_file_content(content, file_path, start_line, end_line)
             else:
-                # First access — validate and read from disk
-                full_path = (self._repo_path / file_path).resolve()
-                repo_resolved = self._repo_path.resolve()
-
-                if not str(full_path).startswith(str(repo_resolved)):
-                    result = f"Error: Path '{file_path}' is outside the repository."
-                    content = None
-                elif not full_path.exists():
-                    result = f"Error: File '{file_path}' not found."
-                    content = None
-                elif not full_path.is_file():
-                    result = f"Error: '{file_path}' is not a file."
+                # Read from SQLite (source of truth)
+                content = self._store.get_file_content(file_path)
+                if content is None:
+                    result = f"Error: File '{file_path}' not found in index."
                     content = None
                 else:
-                    try:
-                        content = full_path.read_text(encoding="utf-8", errors="replace")
-                        self._file_cache[file_path] = content
-                        result = format_file_content(content, file_path, start_line, end_line)
-                    except OSError as e:
-                        result = f"Error reading '{file_path}': {e}"
-                        content = None
+                    self._file_cache[file_path] = content
+                    result = format_file_content(content, file_path, start_line, end_line)
 
             # Add implicit symbol definitions found in this range
             if content is not None:
@@ -336,7 +336,7 @@ class AgentLoop:
                 from indiseek.tools.read_file import DEFAULT_LINE_CAP
                 s = start_line or 1
                 e = end_line or min(len(content.splitlines()), DEFAULT_LINE_CAP)
-                
+
                 symbols = self._store.get_symbols_in_range(file_path, s, e)
                 if symbols:
                     sym_lines = ["\nSymbols defined in this range:"]

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,7 +14,7 @@ from indiseek.agent.loop import (
     AgentResult,
     EvidenceStep,
 )
-from indiseek.storage.sqlite_store import Chunk, SqliteStore, Symbol
+from indiseek.storage.sqlite_store import SqliteStore, Symbol
 from indiseek.tools.search_code import CodeSearcher, HybridResult
 
 
@@ -33,13 +31,9 @@ def store(tmp_path):
 
 @pytest.fixture
 def repo_dir(tmp_path):
-    """Create a temporary repo with sample files."""
+    """Create a temporary repo directory (files served from SQLite, not disk)."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "src").mkdir()
-    (repo / "src" / "main.ts").write_text(
-        "function hello() {\n  console.log('hello');\n}\n"
-    )
     return repo
 
 
@@ -105,17 +99,24 @@ class TestToolExecution:
         assert "util.ts" not in result
 
     def test_execute_read_file(self, store, repo_dir, searcher):
+        store.insert_file_content(
+            "src/main.ts",
+            "function hello() {\n  console.log('hello');\n}\n",
+        )
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         result = agent._execute_tool("read_file", {"path": "src/main.ts"})
         assert "function hello" in result
 
     def test_execute_read_file_with_lines(self, store, repo_dir, searcher):
+        # Generate a file with 200 lines so we can request a range >= 100
+        lines = [f"line {i}" for i in range(1, 201)]
+        store.insert_file_content("src/big.ts", "\n".join(lines))
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         result = agent._execute_tool(
-            "read_file", {"path": "src/main.ts", "start_line": 1, "end_line": 1}
+            "read_file", {"path": "src/big.ts", "start_line": 1, "end_line": 100}
         )
-        assert "function hello" in result
-        assert "console.log" not in result
+        assert "line 1" in result
+        assert "line 100" in result
 
     def test_execute_resolve_symbol(self, store, repo_dir, searcher):
         store.insert_symbols([
@@ -167,9 +168,9 @@ class TestToolExecution:
 
     def test_execute_tool_error_handling(self, store, repo_dir, searcher):
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
-        # read_file with a non-existent file returns an error message, not an exception
+        # read_file with a file not in index returns an error message
         result = agent._execute_tool("read_file", {"path": "nonexistent.ts"})
-        assert "Error" in result or "not found" in result
+        assert "not found in index" in result
 
 
 # ── File read caching tests ──
@@ -177,40 +178,82 @@ class TestToolExecution:
 
 class TestFileReadCaching:
     def test_read_file_caching_same_file(self, store, repo_dir, searcher):
-        """Second read of same file should come from cache, not disk."""
+        """Second read of same file should come from cache, not SQLite."""
+        store.insert_file_content(
+            "src/main.ts",
+            "function hello() {\n  console.log('hello');\n}\n",
+        )
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         result1 = agent._execute_tool("read_file", {"path": "src/main.ts"})
         assert "function hello" in result1
 
-        # Patch Path.read_text to count calls from here on
-        with patch.object(Path, "read_text", wraps=Path.read_text) as spy:
+        # Spy on store.get_file_content to verify cache prevents SQLite reads
+        with patch.object(store, "get_file_content", wraps=store.get_file_content) as spy:
             result2 = agent._execute_tool("read_file", {"path": "src/main.ts"})
-            assert spy.call_count == 0  # served from cache
+            assert spy.call_count == 0  # served from in-memory cache
         assert "function hello" in result2
 
     def test_read_file_caching_different_files(self, store, repo_dir, searcher):
         """Different files should both be cached."""
+        store.insert_file_content(
+            "src/main.ts",
+            "function hello() {\n  console.log('hello');\n}\n",
+        )
+        store.insert_file_content("src/extra.ts", "const x = 1;\n")
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         agent._execute_tool("read_file", {"path": "src/main.ts"})
         assert "src/main.ts" in agent._file_cache
-        # Need a second file — it's already in repo_dir from the fixture? No,
-        # repo_dir fixture only has src/main.ts. Let's create one.
-        (repo_dir / "src" / "extra.ts").write_text("const x = 1;\n")
         agent._execute_tool("read_file", {"path": "src/extra.ts"})
         assert "src/extra.ts" in agent._file_cache
         assert len(agent._file_cache) == 2
 
     def test_read_file_cache_line_range_slicing(self, store, repo_dir, searcher):
         """Cache hit with line range should return correct slice."""
+        # Create 200-line file so a 100-line range doesn't trigger expansion
+        lines = [f"line {i}" for i in range(1, 201)]
+        store.insert_file_content("src/main.ts", "\n".join(lines))
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         # First read caches full content
         agent._execute_tool("read_file", {"path": "src/main.ts"})
-        # Second read requests only line 2
+        # Second read requests lines 100-199 (>= 100 line range, no expansion)
         result = agent._execute_tool(
-            "read_file", {"path": "src/main.ts", "start_line": 2, "end_line": 2}
+            "read_file", {"path": "src/main.ts", "start_line": 100, "end_line": 199}
         )
-        assert "console.log" in result
-        assert "function hello" not in result
+        assert "line 100" in result
+        assert "line 199" in result
+        assert "line 1 " not in result  # trailing space avoids matching "line 100"
+
+    def test_read_file_min_range_expansion(self, store, repo_dir, searcher):
+        """Small ranges (<100 lines) get expanded to 150 lines centered on midpoint."""
+        # Create a 300-line file
+        lines = [f"line {i}" for i in range(1, 301)]
+        store.insert_file_content("src/wide.ts", "\n".join(lines))
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+
+        # Request 10 lines (150-159): range=10, well below 100
+        result = agent._execute_tool(
+            "read_file", {"path": "src/wide.ts", "start_line": 150, "end_line": 159}
+        )
+        # Midpoint of 150-159 is 154, so expanded range is 79-228
+        # Verify expanded content: should include lines well outside original range
+        assert "line 79" in result   # expanded start
+        assert "line 228" in result  # expanded end
+        # Should NOT include lines outside the expanded window
+        assert "line 78 " not in result  # before expanded start
+        assert "line 229" not in result  # after expanded end
+
+    def test_read_file_expansion_clamps_at_line_1(self, store, repo_dir, searcher):
+        """Range expansion near the top of a file clamps start_line to 1."""
+        lines = [f"line {i}" for i in range(1, 201)]
+        store.insert_file_content("src/top.ts", "\n".join(lines))
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+
+        # Request lines 1-5: midpoint=3, expand would be 3-75=-72 → clamped to 1
+        result = agent._execute_tool(
+            "read_file", {"path": "src/top.ts", "start_line": 1, "end_line": 5}
+        )
+        assert "line 1" in result
+        assert "line 150" in result  # 1 + 149 = 150
 
 
 # ── Search query caching tests ──
@@ -317,6 +360,10 @@ class TestParallelToolCalls:
                 end_line=3, end_col=1, signature="function hello()",
             ),
         ])
+        store.insert_file_content(
+            "src/main.ts",
+            "function hello() {\n  console.log('hello');\n}\n",
+        )
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
 
         # Build a response with 3 parallel function calls
@@ -492,9 +539,9 @@ class TestAgentLoop:
         """Tool results exceeding 15000 chars are truncated."""
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
 
-        # Create a file with a lot of content
+        # Store a large file in SQLite
         big_content = "x" * 20000
-        (repo_dir / "big.ts").write_text(big_content)
+        store.insert_file_content("big.ts", big_content)
 
         fn_resp = _make_fn_call_response("read_file", {"path": "big.ts"})
         text_resp = _make_text_response("Big file read.")

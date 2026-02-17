@@ -310,3 +310,30 @@ _Session duration: 10m 3s — 2026-02-15 16:20:39_
 - File content storage is done in `pipeline.py`'s `run_treesitter()` rather than directly in `scripts/index.py`, since that's where the file read loop lives
 - `line_count` is computed from content: counts newlines, handling trailing newline correctly
 - Added 3 extra tests beyond the plan (upsert, line_count, clear_index_data) since they cover important behavior
+
+_Session duration: 2m 59s — 2026-02-17 14:19:33_
+
+---
+
+## Master Phase 2: Self-Contained read_file + Minimum Read Size
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+**Commit**: `9d3d5e8`
+
+### Files Modified
+- `src/indiseek/agent/loop.py` — replaced disk-based read_file handler with SQLite-backed reads via `store.get_file_content()`. Removed path traversal / exists checks (SQLite is source of truth). Added minimum read range expansion: if requested range < 100 lines, expands to 150 lines centered on midpoint. Kept `_file_cache` as in-memory cache over SQLite reads.
+- `tests/test_agent.py` — updated all read_file tests to insert content via `store.insert_file_content()` instead of relying on disk files. Updated caching tests to spy on `store.get_file_content` instead of `Path.read_text`. Updated `test_execute_read_file_with_lines` to use range >= 100. Added `test_read_file_min_range_expansion` and `test_read_file_expansion_clamps_at_line_1`. Removed unused imports (`json`, `Path`, `Chunk`).
+
+### Test Results
+- 233/233 tests passing (45 in test_agent.py, including 2 new expansion tests)
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **SQLite source of truth**: The agent's `read_file` tool no longer touches disk. Content is read from `file_contents` table (populated during indexing). Error message changed from "File not found" to "File not found in index."
+- **Minimum read range**: When both `start_line` and `end_line` are provided and span < 100 lines, the range is expanded to 150 lines centered on the midpoint. Start line is clamped to 1. This prevents micro-reads that waste agent iterations.
+- **In-memory cache preserved**: `_file_cache` still caches content after first SQLite read, preventing repeated DB lookups for the same file.
+
+### Notes
+- The standalone `read_file()` function in `src/indiseek/tools/read_file.py` is unchanged — it still reads from disk. Only the agent loop's handler was refactored. The standalone function is used for direct tool usage outside the agent loop.
+- Pre-existing ruff warnings in test files (unused imports in test_parser.py, test_summarizer.py, test_tools.py) were not addressed as they are out of scope.

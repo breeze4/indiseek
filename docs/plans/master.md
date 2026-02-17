@@ -43,22 +43,22 @@ Refactor the agent's `read_file` tool to serve from SQLite instead of disk. Enfo
 **Implementation:**
 
 In `src/indiseek/agent/loop.py` (read_file handler, ~lines 295-339):
-- [ ] Replace disk-read block with `content = self._store.get_file_content(file_path)`
-- [ ] Return error if `None` (file not in index)
-- [ ] Remove path traversal / exists checks (SQLite is source of truth)
-- [ ] Keep `self._file_cache` as in-memory cache over SQLite reads
-- [ ] After extracting `start_line`/`end_line`, if range < 100 lines, expand to 150 lines centered on midpoint
-- [ ] Log when expansion happens
+- [x] Replace disk-read block with `content = self._store.get_file_content(file_path)`
+- [x] Return error if `None` (file not in index)
+- [x] Remove path traversal / exists checks (SQLite is source of truth)
+- [x] Keep `self._file_cache` as in-memory cache over SQLite reads
+- [x] After extracting `start_line`/`end_line`, if range < 100 lines, expand to 150 lines centered on midpoint
+- [x] Log when expansion happens
 
 Tests in `tests/test_agent.py`:
-- [ ] Update read_file tests to insert content via `store.insert_file_content()` instead of relying on disk files
-- [ ] Update caching tests to spy on `store.get_file_content` instead of `Path.read_text`
-- [ ] Update `test_execute_read_file_with_lines` to use range >= 100
-- [ ] Add `test_read_file_min_range_expansion` — verify small ranges get expanded
+- [x] Update read_file tests to insert content via `store.insert_file_content()` instead of relying on disk files
+- [x] Update caching tests to spy on `store.get_file_content` instead of `Path.read_text`
+- [x] Update `test_execute_read_file_with_lines` to use range >= 100
+- [x] Add `test_read_file_min_range_expansion` — verify small ranges get expanded
 
 **Verify:**
-- [ ] `pytest` passes
-- [ ] `ruff check src/` clean
+- [x] `pytest` passes
+- [x] `ruff check src/` clean
 
 ---
 
