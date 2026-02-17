@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTasks, useRunOperation, useTaskStream } from '../api/hooks.ts'
+import { useCurrentRepo } from '../contexts/RepoContext.tsx'
 import type { StreamEvent } from '../api/hooks.ts'
 
 const OPERATIONS = [
@@ -122,6 +123,7 @@ function OperationCard({
 }
 
 export default function Operations() {
+  const { currentRepoId } = useCurrentRepo()
   const { data: tasks } = useTasks()
   const runOp = useRunOperation()
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
@@ -130,7 +132,7 @@ export default function Operations() {
   const anyRunning = tasks?.some((t) => t.status === 'running') ?? false
 
   function handleRun(name: string, pathFilter?: string) {
-    const body: Record<string, unknown> = {}
+    const body: Record<string, unknown> = { repo_id: currentRepoId }
     if (pathFilter) {
       body.path_filter = pathFilter
     }

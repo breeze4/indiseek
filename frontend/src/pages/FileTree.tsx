@@ -3,6 +3,7 @@ import { ChevronRight, ChevronDown, Folder, FileText } from 'lucide-react'
 import { useTree } from '../api/hooks.ts'
 import { useExpandedPaths } from '../hooks/useExpandedPaths.ts'
 import { useScrollRestore } from '../hooks/useScrollRestore.ts'
+import { useCurrentRepo } from '../contexts/RepoContext.tsx'
 import type { TreeChild } from '../api/client.ts'
 
 function Badge({ ok, label }: { ok: boolean | number; label: string }) {
@@ -95,7 +96,8 @@ interface TreeLevelProps {
 }
 
 function TreeLevel({ path, expandedPaths, onToggle }: TreeLevelProps) {
-  const { data, isLoading, error } = useTree(path)
+  const { currentRepoId } = useCurrentRepo()
+  const { data, isLoading, error } = useTree(path, currentRepoId)
 
   if (isLoading) return <p className="text-gray-500 text-sm py-1 px-2">Loading...</p>
   if (error) return <p className="text-red-400 text-sm py-1 px-2">Error loading</p>

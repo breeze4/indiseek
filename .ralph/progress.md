@@ -675,3 +675,44 @@ _Session duration: 11m 39s — 2026-02-17 15:42:37_
 - This is a frontend-only phase — no Python changes needed. The backend API endpoints were already added in Phase 12.
 - The page follows existing patterns from Operations.tsx (SSE progress, mutation hooks) and other pages (card layout, status badges).
 - The "View" button links to `/dashboard/files` — will be updated in Phase 14 when pages become repo-scoped.
+
+_Session duration: 6m 11s — 2026-02-17 15:48:48_
+
+---
+
+## Master Phase 14: Multi-Repo — Repo-Scoped Frontend Pages
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+
+### Files Created
+- `frontend/src/contexts/RepoContext.tsx` — React context with `currentRepoId` + `setCurrentRepoId`, backed by localStorage (key: `indiseek_repo_id`, default: 1). Exports `RepoProvider` and `useCurrentRepo()` hook.
+
+### Files Modified
+- `frontend/src/api/client.ts` — added `repoId` parameter to `fetchStats()`, `fetchTree()`, `fetchFileDetail()`, `fetchChunkDetail()`, `searchCode()`, `runQuery()`, `fetchQueryHistory()`. GET endpoints pass `repo_id` as query parameter; POST endpoints include `repo_id` in request body. All default to `1`.
+- `frontend/src/api/hooks.ts` — added `repoId` parameter to `useStats()`, `useTree()`, `useFileDetail()`, `useChunkDetail()`, `useSearch()`, `useQueryHistory()`. Updated `useRunQuery` mutation to accept `repoId`. All query keys now include `repoId` for proper cache scoping.
+- `frontend/src/App.tsx` — wrapped app in `RepoProvider`. Added `RepoSelector` dropdown component in nav sidebar (only shows when 2+ repos exist). Imported `useRepos` hook and `useCurrentRepo` context.
+- `frontend/src/pages/Overview.tsx` — uses `currentRepoId` for `useStats()`. Added `FreshnessCard` component with Check/Sync buttons, stale warning banner (yellow border + message), indexed SHA, current SHA, commits behind, last indexed date. Live SSE progress for sync.
+- `frontend/src/pages/FileTree.tsx` — `TreeLevel` component uses `useCurrentRepo()` to pass `currentRepoId` to `useTree()`. No prop drilling needed since TreeLevel already uses hooks.
+- `frontend/src/pages/FileDetail.tsx` — uses `currentRepoId` for `useFileDetail()`.
+- `frontend/src/pages/ChunkDetail.tsx` — uses `currentRepoId` for `useChunkDetail()`.
+- `frontend/src/pages/Search.tsx` — uses `currentRepoId` for `useSearch()`.
+- `frontend/src/pages/Query.tsx` — uses `currentRepoId` for `useQueryHistory()` and passes `repoId` to `runQuery.mutate()`.
+- `frontend/src/pages/Operations.tsx` — includes `repo_id: currentRepoId` in the POST body for all indexing operation "Run" buttons.
+- `frontend/src/pages/Repos.tsx` — replaced hard-coded `<a href="/dashboard/files">` View button with React Router `<Link to="/files">` that calls `setCurrentRepoId(repo.id)` on click, so clicking "View" on a repo switches the global repo context before navigating.
+- `docs/plans/master.md` — marked all Phase 14 items complete.
+
+### Test Results
+- 323/323 tests passing (no Python changes in this phase)
+- `cd frontend && npm run build` — succeeds, no TypeScript errors
+
+### Implementation Details
+- **RepoContext**: Uses `createContext` with `useState` + `useEffect` for localStorage persistence. The provider wraps the entire app in `App.tsx`.
+- **RepoSelector**: Conditionally renders only when 2+ repos exist (hides for single-repo setups). Styled as a compact dropdown labeled "Repo" above the nav links.
+- **Cache scoping**: All TanStack Query keys now include `repoId`. When the user switches repos via the selector, all cached data is automatically scoped — queries for the new repo fire fresh, while old repo data remains cached.
+- **FreshnessCard**: New component on Overview page showing repo freshness state. Yellow border + warning banner when stale. Check button runs `POST /repos/{id}/check`. Sync button runs `POST /repos/{id}/sync` with live SSE progress log.
+- **Operations repo_id**: The `handleRun` function now always includes `repo_id: currentRepoId` in the POST body, which is picked up by the backend's `RunRequest` Pydantic model.
+
+### Notes
+- This is a frontend-only phase — no Python changes needed. The backend already accepts `repo_id` on all endpoints (added in Phase 12).
+- The `useCurrentRepo()` hook reads from React context, not from URL params. This means repo selection is global across all pages and persists via localStorage.

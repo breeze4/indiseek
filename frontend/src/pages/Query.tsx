@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useRunQuery, useTaskStream, useQueryHistory, useQueryDetail } from '../api/hooks.ts'
+import { useCurrentRepo } from '../contexts/RepoContext.tsx'
 import type { StreamEvent } from '../api/hooks.ts'
 import type { QueryResult, QueryEvidence, QueryCachedResponse } from '../api/client.ts'
 
@@ -117,6 +118,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 export default function Query() {
+  const { currentRepoId } = useCurrentRepo()
   const [prompt, setPrompt] = useState('')
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
   const [result, setResult] = useState<QueryResult | null>(null)
@@ -125,7 +127,7 @@ export default function Query() {
   const runQuery = useRunQuery()
   const { events, done } = useTaskStream(activeTaskId)
   const queryClient = useQueryClient()
-  const { data: history } = useQueryHistory()
+  const { data: history } = useQueryHistory(currentRepoId)
   const { data: historyDetail } = useQueryDetail(selectedQueryId)
 
   const isRunning = activeTaskId !== null && !done
@@ -149,7 +151,7 @@ export default function Query() {
     setActiveTaskId(null)
     setSelectedQueryId(0)
     setIsCachedResult(false)
-    runQuery.mutate({ prompt: prompt.trim(), force }, {
+    runQuery.mutate({ prompt: prompt.trim(), force, repoId: currentRepoId }, {
       onSuccess: (data) => {
         if ('cached' in data && data.cached) {
           const cached = data as QueryCachedResponse

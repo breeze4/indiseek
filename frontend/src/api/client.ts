@@ -161,20 +161,21 @@ export interface QueryHistoryDetail extends QueryHistoryItem {
 
 // API functions
 
-export const fetchStats = () => apiFetch<Stats>('/stats')
+export const fetchStats = (repoId: number = 1) =>
+  apiFetch<Stats>(`/stats?repo_id=${repoId}`)
 
-export const fetchTree = (path: string) =>
-  apiFetch<TreeResponse>(`/tree?path=${encodeURIComponent(path)}`)
+export const fetchTree = (path: string, repoId: number = 1) =>
+  apiFetch<TreeResponse>(`/tree?path=${encodeURIComponent(path)}&repo_id=${repoId}`)
 
-export const fetchFileDetail = (filePath: string) =>
-  apiFetch<FileDetailResponse>(`/files/${filePath}`)
+export const fetchFileDetail = (filePath: string, repoId: number = 1) =>
+  apiFetch<FileDetailResponse>(`/files/${filePath}?repo_id=${repoId}`)
 
-export const fetchChunkDetail = (chunkId: number) =>
-  apiFetch<ChunkData>(`/chunks/${chunkId}`)
+export const fetchChunkDetail = (chunkId: number, repoId: number = 1) =>
+  apiFetch<ChunkData>(`/chunks/${chunkId}?repo_id=${repoId}`)
 
-export const searchCode = (q: string, mode: string, limit: number) =>
+export const searchCode = (q: string, mode: string, limit: number, repoId: number = 1) =>
   apiFetch<SearchResponse>(
-    `/search?q=${encodeURIComponent(q)}&mode=${encodeURIComponent(mode)}&limit=${limit}`
+    `/search?q=${encodeURIComponent(q)}&mode=${encodeURIComponent(mode)}&limit=${limit}&repo_id=${repoId}`
   )
 
 export const fetchTasks = () => apiFetch<TaskInfo[]>('/tasks')
@@ -186,15 +187,15 @@ export const runOperation = (name: string, body?: Record<string, unknown>) =>
     body: JSON.stringify(body ?? {}),
   })
 
-export const runQuery = (prompt: string, force?: boolean) =>
+export const runQuery = (prompt: string, force?: boolean, repoId: number = 1) =>
   apiFetch<RunResponse | QueryCachedResponse>('/run/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, ...(force ? { force: true } : {}) }),
+    body: JSON.stringify({ prompt, repo_id: repoId, ...(force ? { force: true } : {}) }),
   })
 
-export const fetchQueryHistory = () =>
-  apiFetch<QueryHistoryItem[]>('/queries')
+export const fetchQueryHistory = (repoId: number = 1) =>
+  apiFetch<QueryHistoryItem[]>(`/queries?repo_id=${repoId}`)
 
 export const fetchQueryDetail = (id: number) =>
   apiFetch<QueryHistoryDetail>(`/queries/${id}`)

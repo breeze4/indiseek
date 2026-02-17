@@ -335,17 +335,17 @@ All existing dashboard pages become repo-scoped via a repo selector.
 
 **Implementation:**
 
-- [ ] **8.1** Add `RepoContext` (React context) with `currentRepoId` + `setCurrentRepoId`. Initialize from localStorage, default repo_id=1. Repo selector dropdown in nav sidebar.
-- [ ] **8.2** Update Overview page: use `currentRepoId`, add freshness card with Check/Sync buttons, stale warning banner.
-- [ ] **8.3** Update FileTree page: use `currentRepoId` for tree API calls.
-- [ ] **8.4** Update FileDetail and ChunkDetail pages: use `currentRepoId`.
-- [ ] **8.5** Update Search page: use `currentRepoId` for search endpoint.
-- [ ] **8.6** Update Query page: use `currentRepoId`, pass `repoId` to `runQuery`, filter history by repo.
-- [ ] **8.7** Update Operations page: use `currentRepoId` for all "Run" buttons.
+- [x] **8.1** Add `RepoContext` (React context) with `currentRepoId` + `setCurrentRepoId`. Initialize from localStorage, default repo_id=1. Repo selector dropdown in nav sidebar.
+- [x] **8.2** Update Overview page: use `currentRepoId`, add freshness card with Check/Sync buttons, stale warning banner.
+- [x] **8.3** Update FileTree page: use `currentRepoId` for tree API calls.
+- [x] **8.4** Update FileDetail and ChunkDetail pages: use `currentRepoId`.
+- [x] **8.5** Update Search page: use `currentRepoId` for search endpoint.
+- [x] **8.6** Update Query page: use `currentRepoId`, pass `repoId` to `runQuery`, filter history by repo.
+- [x] **8.7** Update Operations page: use `currentRepoId` for all "Run" buttons.
 
 **Verify:**
-- [ ] `cd frontend && npm run build` succeeds
-- [ ] `pytest` passes
+- [x] `cd frontend && npm run build` succeeds
+- [x] `pytest` passes
 
 ---
 

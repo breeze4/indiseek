@@ -1,10 +1,12 @@
 import { useParams, Link } from 'react-router-dom'
 import { useChunkDetail } from '../api/hooks.ts'
+import { useCurrentRepo } from '../contexts/RepoContext.tsx'
 
 export default function ChunkDetail() {
   const { id } = useParams<{ id: string }>()
+  const { currentRepoId } = useCurrentRepo()
   const chunkId = parseInt(id ?? '0', 10)
-  const { data, isLoading, error } = useChunkDetail(chunkId)
+  const { data, isLoading, error } = useChunkDetail(chunkId, currentRepoId)
 
   if (isLoading) return <p className="text-gray-400">Loading...</p>
   if (error) return <p className="text-red-400">Error: {(error as Error).message}</p>

@@ -23,34 +23,34 @@ import {
   type RunResponse,
 } from './client.ts'
 
-export function useStats() {
-  return useQuery({ queryKey: ['stats'], queryFn: fetchStats })
+export function useStats(repoId: number = 1) {
+  return useQuery({ queryKey: ['stats', repoId], queryFn: () => fetchStats(repoId) })
 }
 
-export function useTree(path: string) {
-  return useQuery({ queryKey: ['tree', path], queryFn: () => fetchTree(path) })
+export function useTree(path: string, repoId: number = 1) {
+  return useQuery({ queryKey: ['tree', path, repoId], queryFn: () => fetchTree(path, repoId) })
 }
 
-export function useFileDetail(filePath: string) {
+export function useFileDetail(filePath: string, repoId: number = 1) {
   return useQuery({
-    queryKey: ['file', filePath],
-    queryFn: () => fetchFileDetail(filePath),
+    queryKey: ['file', filePath, repoId],
+    queryFn: () => fetchFileDetail(filePath, repoId),
     enabled: !!filePath,
   })
 }
 
-export function useChunkDetail(chunkId: number) {
+export function useChunkDetail(chunkId: number, repoId: number = 1) {
   return useQuery({
-    queryKey: ['chunk', chunkId],
-    queryFn: () => fetchChunkDetail(chunkId),
+    queryKey: ['chunk', chunkId, repoId],
+    queryFn: () => fetchChunkDetail(chunkId, repoId),
     enabled: chunkId > 0,
   })
 }
 
-export function useSearch(q: string, mode: string, limit: number) {
+export function useSearch(q: string, mode: string, limit: number, repoId: number = 1) {
   return useQuery({
-    queryKey: ['search', q, mode, limit],
-    queryFn: () => searchCode(q, mode, limit),
+    queryKey: ['search', q, mode, limit, repoId],
+    queryFn: () => searchCode(q, mode, limit, repoId),
     enabled: q.length > 0,
   })
 }
@@ -77,18 +77,18 @@ export function useRunOperation() {
 export function useRunQuery() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ prompt, force }: { prompt: string; force?: boolean }) =>
-      runQuery(prompt, force),
+    mutationFn: ({ prompt, force, repoId }: { prompt: string; force?: boolean; repoId?: number }) =>
+      runQuery(prompt, force, repoId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
     },
   })
 }
 
-export function useQueryHistory() {
+export function useQueryHistory(repoId: number = 1) {
   return useQuery({
-    queryKey: ['queryHistory'],
-    queryFn: fetchQueryHistory,
+    queryKey: ['queryHistory', repoId],
+    queryFn: () => fetchQueryHistory(repoId),
     refetchOnWindowFocus: true,
   })
 }

@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useSearch } from '../api/hooks.ts'
+import { useCurrentRepo } from '../contexts/RepoContext.tsx'
 
 export default function SearchPage() {
+  const { currentRepoId } = useCurrentRepo()
   const [query, setQuery] = useState('')
   const [mode, setMode] = useState('hybrid')
   const [submitted, setSubmitted] = useState('')
 
-  const { data, isLoading, error } = useSearch(submitted, mode, 20)
+  const { data, isLoading, error } = useSearch(submitted, mode, 20, currentRepoId)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

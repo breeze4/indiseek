@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   useRepos,
   useCreateRepo,
@@ -7,6 +8,7 @@ import {
   useSyncRepo,
   useTaskStream,
 } from '../api/hooks.ts'
+import { useCurrentRepo } from '../contexts/RepoContext.tsx'
 import type { Repo, FreshnessCheck } from '../api/client.ts'
 
 function StatusBadge({ status }: { status: string }) {
@@ -43,6 +45,7 @@ function RepoCard({
   onDelete,
   onCheck,
   onSync,
+  onView,
   checking,
   syncing,
   freshness,
@@ -52,6 +55,7 @@ function RepoCard({
   onDelete: (id: number) => void
   onCheck: (id: number) => void
   onSync: (id: number) => void
+  onView: (id: number) => void
   checking: boolean
   syncing: boolean
   freshness?: FreshnessCheck | null
@@ -116,12 +120,13 @@ function RepoCard({
         >
           {syncing ? 'Syncing...' : 'Sync'}
         </button>
-        <a
-          href={`/dashboard/files`}
+        <Link
+          to="/files"
+          onClick={() => onView(repo.id)}
           className="px-3 py-1.5 rounded text-sm font-medium bg-gray-700 hover:bg-gray-600 text-white"
         >
           View
-        </a>
+        </Link>
         <div className="flex-1" />
         {!confirmDelete ? (
           <button
@@ -199,6 +204,7 @@ function AddRepoForm({ onSubmit, disabled }: { onSubmit: (name: string, url: str
 
 export default function Repos() {
   const { data: repos, isLoading, error } = useRepos()
+  const { setCurrentRepoId } = useCurrentRepo()
   const createMut = useCreateRepo()
   const deleteMut = useDeleteRepo()
   const checkMut = useCheckFreshness()
@@ -208,6 +214,10 @@ export default function Repos() {
   const [freshnessResults, setFreshnessResults] = useState<Record<number, FreshnessCheck>>({})
   const [checkingId, setCheckingId] = useState<number | null>(null)
   const [syncingId, setSyncingId] = useState<number | null>(null)
+
+  function handleView(repoId: number) {
+    setCurrentRepoId(repoId)
+  }
 
   function handleCreate(name: string, url: string) {
     createMut.mutate(
@@ -318,6 +328,7 @@ export default function Repos() {
             onDelete={handleDelete}
             onCheck={handleCheck}
             onSync={handleSync}
+            onView={handleView}
             checking={checkingId === repo.id}
             syncing={syncingId === repo.id}
             freshness={freshnessResults[repo.id]}

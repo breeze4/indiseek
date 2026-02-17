@@ -1,11 +1,13 @@
 import { useLocation, Link } from 'react-router-dom'
 import { useFileDetail } from '../api/hooks.ts'
+import { useCurrentRepo } from '../contexts/RepoContext.tsx'
 
 export default function FileDetail() {
   const location = useLocation()
+  const { currentRepoId } = useCurrentRepo()
   // Extract file path from URL: /files/path/to/file.ts
   const filePath = location.pathname.replace(/^\/files\//, '')
-  const { data, isLoading, error } = useFileDetail(filePath)
+  const { data, isLoading, error } = useFileDetail(filePath, currentRepoId)
 
   if (isLoading) return <p className="text-gray-400">Loading...</p>
   if (error) return <p className="text-red-400">Error: {(error as Error).message}</p>
