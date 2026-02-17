@@ -453,3 +453,33 @@ _Session duration: 4m 45s — 2026-02-17 14:54:35_
 ### Notes
 - This is a frontend-only phase — no Python changes needed. The `/tree` API endpoint already returns the `summary` field (added in Phase 5).
 - Added `shrink-0` classes to icon and name elements so they don't compress when a long summary fills the flex container.
+
+_Session duration: 2m 29s — 2026-02-17 14:57:04_
+
+---
+
+## Master Phase 7: Multi-Repo — Schema + Migration
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+**Commit**: `d15f535`
+
+### Files Modified
+- `src/indiseek/storage/sqlite_store.py` — added `repos` table in `init_db()` with all columns (name, url, local_path, created_at, last_indexed_at, indexed_commit_sha, current_commit_sha, commits_behind, status) and index on `name`. Added `_migrate_add_column()` helper to DRY up migration pattern. Added `repo_id INTEGER DEFAULT 1` column to all 9 data tables (symbols, chunks, file_summaries, scip_symbols, scip_occurrences, scip_relationships, queries, file_contents, directory_summaries) via ALTER TABLE migrations with indexes. Added `_ensure_legacy_repo()` to auto-create repo_id=1 when existing data detected. Added 6 repo CRUD methods: `insert_repo()`, `get_repo()`, `get_repo_by_name()`, `list_repos()`, `update_repo()`, `delete_repo()`.
+
+### Files Created
+- `tests/test_repos.py` — 48 tests in 5 test classes: TestReposTable (3 tests for table/column/index existence), TestRepoIdMigrations (28 parametrized tests for column existence, defaults, indexes across all 9 tables + idempotency), TestLegacyRepoAutoCreation (5 tests for auto-creation logic including REPO_PATH env var derivation), TestRepoCRUD (12 tests for all CRUD operations including edge cases)
+
+### Test Results
+- 299/299 tests passing (251 existing + 48 new)
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **Migration pattern**: Extracted `_migrate_add_column(table, column, col_type)` helper that checks `PRAGMA table_info` and ALTERs if column missing. Used for both the existing `source_query_id` migration and all 9 new `repo_id` migrations.
+- **repo_id DEFAULT 1**: All existing rows automatically get repo_id=1 via the DEFAULT clause. No data copying needed.
+- **Legacy repo auto-creation**: `_ensure_legacy_repo()` checks if repos table is empty AND symbols table has rows. If so, derives repo name from `REPO_PATH` env var (falls back to "legacy"), inserts row with id=1. Runs on every `init_db()` call but is idempotent.
+- **Backwards-compatible**: App works identically after this phase — no callers changed, all queries return same results since repo_id defaults to 1.
+
+### Notes
+- The `_ensure_legacy_repo()` method imports `os` inside the function to avoid adding it to module-level imports (it's only needed for this one-time migration check).
+- `update_repo()` uses dynamic SQL construction from kwargs — acceptable here since column names come from application code, not user input.

@@ -186,21 +186,21 @@ Add the `repos` table and `repo_id` column to all data tables. Migrate existing 
 
 **Implementation:**
 
-- [ ] **1.1** Add `repos` table to `init_db()`: `repos(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, url TEXT, local_path TEXT NOT NULL, created_at TEXT NOT NULL, last_indexed_at TEXT, indexed_commit_sha TEXT, current_commit_sha TEXT, commits_behind INTEGER DEFAULT 0, status TEXT NOT NULL DEFAULT 'active')` with index on `name`
-- [ ] **1.2** Add `repo_id INTEGER DEFAULT 1` column to `symbols`, `chunks`, `file_summaries` tables via ALTER TABLE migration (same pattern as existing `source_query_id` migration). Add indexes.
-- [ ] **1.3** Add `repo_id INTEGER DEFAULT 1` column to `scip_symbols`, `scip_occurrences`, `scip_relationships` tables via migration. Add indexes.
-- [ ] **1.4** Add `repo_id INTEGER DEFAULT 1` column to `queries` table via migration. Add index.
-- [ ] **1.4b** Add `repo_id INTEGER DEFAULT 1` column to `file_contents` and `directory_summaries` tables via migration. Add indexes. *(Note: these tables were added by Phases 1 and 4 of this master plan; not in the original repo-management plan.)*
-- [ ] **1.5** Auto-create legacy repo row: if `repos` table empty AND `symbols` has rows, insert `(id=1, name=<from REPO_PATH or 'legacy'>, local_path=<REPO_PATH>, created_at=now, status='active')`
-- [ ] **1.6** Add `SqliteStore` helper methods: `insert_repo()`, `get_repo()`, `get_repo_by_name()`, `list_repos()`, `update_repo()`, `delete_repo()`
+- [x] **1.1** Add `repos` table to `init_db()`: `repos(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, url TEXT, local_path TEXT NOT NULL, created_at TEXT NOT NULL, last_indexed_at TEXT, indexed_commit_sha TEXT, current_commit_sha TEXT, commits_behind INTEGER DEFAULT 0, status TEXT NOT NULL DEFAULT 'active')` with index on `name`
+- [x] **1.2** Add `repo_id INTEGER DEFAULT 1` column to `symbols`, `chunks`, `file_summaries` tables via ALTER TABLE migration (same pattern as existing `source_query_id` migration). Add indexes.
+- [x] **1.3** Add `repo_id INTEGER DEFAULT 1` column to `scip_symbols`, `scip_occurrences`, `scip_relationships` tables via migration. Add indexes.
+- [x] **1.4** Add `repo_id INTEGER DEFAULT 1` column to `queries` table via migration. Add index.
+- [x] **1.4b** Add `repo_id INTEGER DEFAULT 1` column to `file_contents` and `directory_summaries` tables via migration. Add indexes. *(Note: these tables were added by Phases 1 and 4 of this master plan; not in the original repo-management plan.)*
+- [x] **1.5** Auto-create legacy repo row: if `repos` table empty AND `symbols` has rows, insert `(id=1, name=<from REPO_PATH or 'legacy'>, local_path=<REPO_PATH>, created_at=now, status='active')`
+- [x] **1.6** Add `SqliteStore` helper methods: `insert_repo()`, `get_repo()`, `get_repo_by_name()`, `list_repos()`, `update_repo()`, `delete_repo()`
 
 Tests:
-- [ ] Add tests for repo CRUD methods
-- [ ] All existing tests still pass
+- [x] Add tests for repo CRUD methods
+- [x] All existing tests still pass
 
 **Verify:**
-- [ ] `pytest` passes
-- [ ] `ruff check src/` clean
+- [x] `pytest` passes
+- [x] `ruff check src/` clean
 
 ---
 

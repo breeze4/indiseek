@@ -142,6 +142,20 @@ class SqliteStore:
                 summary TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS repos (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                url TEXT,
+                local_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                last_indexed_at TEXT,
+                indexed_commit_sha TEXT,
+                current_commit_sha TEXT,
+                commits_behind INTEGER DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'active'
+            );
+            CREATE INDEX IF NOT EXISTS idx_repos_name ON repos(name);
+
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT
@@ -149,12 +163,113 @@ class SqliteStore:
             """
         )
         self._conn.commit()
+
+        # ── Migrations ──
+        # Pattern: check if column exists, ALTER if missing.
+
         # Migrate: add source_query_id to existing queries table
-        cur.execute("PRAGMA table_info(queries)")
+        self._migrate_add_column("queries", "source_query_id", "INTEGER")
+
+        # Migrate: add repo_id to all data tables (default 1 = legacy repo)
+        for table in [
+            "symbols", "chunks", "file_summaries",
+            "scip_symbols", "scip_occurrences", "scip_relationships",
+            "queries", "file_contents", "directory_summaries",
+        ]:
+            self._migrate_add_column(table, "repo_id", "INTEGER DEFAULT 1")
+
+        # Create indexes for repo_id columns
+        for table in [
+            "symbols", "chunks", "file_summaries",
+            "scip_symbols", "scip_occurrences", "scip_relationships",
+            "queries", "file_contents", "directory_summaries",
+        ]:
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{table}_repo_id ON {table}(repo_id)"
+            )
+        self._conn.commit()
+
+        # Auto-create legacy repo row if data exists but repos is empty
+        self._ensure_legacy_repo()
+
+    def _migrate_add_column(self, table: str, column: str, col_type: str) -> None:
+        """Add a column to a table if it doesn't exist."""
+        cur = self._conn.execute(f"PRAGMA table_info({table})")
         columns = {row[1] for row in cur.fetchall()}
-        if "source_query_id" not in columns:
-            cur.execute("ALTER TABLE queries ADD COLUMN source_query_id INTEGER")
+        if column not in columns:
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
             self._conn.commit()
+
+    def _ensure_legacy_repo(self) -> None:
+        """Auto-create legacy repo row (id=1) if data exists but repos table is empty."""
+        cur = self._conn.execute("SELECT COUNT(*) FROM repos")
+        if cur.fetchone()[0] > 0:
+            return
+        # Check if there's any indexed data
+        cur = self._conn.execute("SELECT COUNT(*) FROM symbols")
+        has_data = cur.fetchone()[0] > 0
+        if not has_data:
+            return
+        # Derive repo name from REPO_PATH env var if available
+        import os
+        repo_path = os.getenv("REPO_PATH", "")
+        name = Path(repo_path).name if repo_path else "legacy"
+        local_path = repo_path or "."
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """INSERT INTO repos (id, name, url, local_path, created_at, status)
+               VALUES (1, ?, NULL, ?, ?, 'active')""",
+            (name, local_path, now),
+        )
+        self._conn.commit()
+
+    # ── Repo operations ──
+
+    def insert_repo(
+        self, name: str, local_path: str, url: str | None = None, status: str = "active"
+    ) -> int:
+        """Insert a new repo and return its id."""
+        now = datetime.now(timezone.utc).isoformat()
+        cur = self._conn.execute(
+            """INSERT INTO repos (name, url, local_path, created_at, status)
+               VALUES (?, ?, ?, ?, ?)""",
+            (name, url, local_path, now, status),
+        )
+        self._conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def get_repo(self, repo_id: int) -> dict | None:
+        """Get a repo by id."""
+        cur = self._conn.execute("SELECT * FROM repos WHERE id = ?", (repo_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def get_repo_by_name(self, name: str) -> dict | None:
+        """Get a repo by name."""
+        cur = self._conn.execute("SELECT * FROM repos WHERE name = ?", (name,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def list_repos(self) -> list[dict]:
+        """List all repos ordered by name."""
+        cur = self._conn.execute("SELECT * FROM repos ORDER BY name")
+        return [dict(row) for row in cur.fetchall()]
+
+    def update_repo(self, repo_id: int, **kwargs: str | int | None) -> None:
+        """Update repo fields. Pass column=value keyword arguments."""
+        if not kwargs:
+            return
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs)
+        values = list(kwargs.values()) + [repo_id]
+        self._conn.execute(
+            f"UPDATE repos SET {set_clause} WHERE id = ?", values  # noqa: S608
+        )
+        self._conn.commit()
+
+    def delete_repo(self, repo_id: int) -> None:
+        """Delete a repo by id."""
+        self._conn.execute("DELETE FROM repos WHERE id = ?", (repo_id,))
+        self._conn.commit()
 
     def clear_index_data(self) -> None:
         """Delete all indexed data (symbols, chunks, SCIP, file contents) for a clean re-index."""
