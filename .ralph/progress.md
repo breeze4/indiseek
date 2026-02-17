@@ -366,3 +366,36 @@ _Session duration: 5m 56s — 2026-02-17 14:40:35_
 ### Notes
 - `test_budget_injected_into_evidence` did not need updating — it tests the evidence summary format ("Map: src"), not the iteration string
 - The `test_top_results_get_longer_previews` test verifies the tiered behavior: 400-char content is NOT truncated in result 1 (top-3, 600 limit) but IS truncated in result 4 (300 limit)
+
+_Session duration: 3m 57s — 2026-02-17 14:44:56_
+
+---
+
+## Master Phase 4: Directory Summaries — Backend
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+**Commit**: `b3ae07a`
+
+### Files Modified
+- `src/indiseek/storage/sqlite_store.py` — added `directory_summaries` table in `init_db()`, added CRUD methods: `insert_directory_summary()`, `insert_directory_summaries()`, `get_directory_summary()`, `get_directory_summaries()`, `get_all_directory_paths_from_summaries()`
+- `src/indiseek/indexer/summarizer.py` — added `DIR_SYSTEM_PROMPT` constant, added `summarize_directories()` method to `Summarizer` class: walks directories bottom-up, collects child file + directory summaries, sends to LLM, resume-safe (skips existing), supports `on_progress` callback, 0.5s delay between API calls
+- `src/indiseek/indexer/pipeline.py` — added `run_summarize_dirs()` pipeline step function
+- `scripts/index.py` — added directory summarization step after file summarization (guarded by `--summarize` flag), imported `run_summarize_dirs`
+- `tests/test_summarizer.py` — added `TestDirectorySummaryStorage` class (8 tests for CRUD) and `TestSummarizeDirectories` class (5 tests: basic bottom-up, resume-safe skip, no-file-summaries, progress callback, child dir summaries in prompt)
+
+### Test Results
+- 247/247 tests passing (234 existing + 13 new)
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **directory_summaries table**: `(id INTEGER PRIMARY KEY, dir_path TEXT UNIQUE, summary TEXT NOT NULL)` — stores one-sentence LLM summaries per directory
+- **Bottom-up traversal**: Directories sorted by depth (deepest first) so child summaries are available when summarizing parents
+- **Root directory**: The "." directory represents the repo root and gets summarized last
+- **Resume-safe**: Existing directory summaries are loaded into a cache and skipped during processing; newly computed summaries are cached for parent use
+- **Pipeline integration**: `run_summarize_dirs()` in pipeline.py wraps the Summarizer call; `scripts/index.py` calls it after file summarization within the `--summarize` block
+
+### Notes
+- The `Summarizer` class now has two separate system prompts: `SYSTEM_PROMPT` for files and `DIR_SYSTEM_PROMPT` for directories
+- Directory summaries prompt includes both "Files:" and "Subdirectories:" sections showing child names with their summaries
+- Error handling matches the file summarizer pattern: auth errors abort immediately, 5 consecutive failures abort

@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from indiseek import config
-from indiseek.indexer.pipeline import get_tracked_ts_files, run_treesitter, run_scip, run_lexical
+from indiseek.indexer.pipeline import get_tracked_ts_files, run_treesitter, run_scip, run_lexical, run_summarize_dirs
 from indiseek.storage.sqlite_store import SqliteStore
 
 
@@ -175,6 +175,11 @@ def main() -> None:
         summarizer = Summarizer(store)
         n_summarized = summarizer.summarize_repo(repo_path, path_filter=args.filter)
         print(f"  Files summarized: {n_summarized}")
+
+        # Step 4b: Summarize directories (after file summaries exist)
+        print("\nSummarizing directories...")
+        dir_result = run_summarize_dirs(store)
+        print(f"  Directories summarized: {dir_result['directories_summarized']}")
 
     # Step 5: Lexical index
     if args.lexical:

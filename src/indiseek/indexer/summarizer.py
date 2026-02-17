@@ -19,6 +19,13 @@ SYSTEM_PROMPT = (
     "Do not start with 'This file'. Just state what it does."
 )
 
+DIR_SYSTEM_PROMPT = (
+    "You are a code documentation assistant. "
+    "Given the contents of a directory (child files and subdirectories with their summaries), "
+    "summarize the directory's overall responsibility in one sentence. "
+    "Be specific. Do not start with 'This directory'."
+)
+
 # Directories to skip when walking the repo
 SKIP_DIRS = {
     "node_modules", "dist", ".git", ".svn", "__pycache__",
@@ -159,6 +166,131 @@ class Summarizer:
                 time.sleep(self._delay)
 
         print(f"Summarization complete: {summarized} files summarized")
+        return summarized
+
+    def summarize_directories(
+        self,
+        on_progress: Callable[[dict], None] | None = None,
+    ) -> int:
+        """Summarize directories bottom-up using child file and directory summaries.
+
+        Walks all directories that contain summarized files, starting from the
+        deepest level. For each directory, collects child file summaries and
+        already-computed child directory summaries, then asks the LLM for a
+        one-sentence summary.
+
+        Returns the number of directories summarized.
+        """
+        # Get all file summaries to determine which directories exist
+        all_summaries = self._store.get_file_summaries()
+        if not all_summaries:
+            print("No file summaries found. Run file summarization first.")
+            return 0
+
+        # Build a mapping: dir_path -> list of (filename, summary)
+        dir_files: dict[str, list[tuple[str, str]]] = {}
+        all_dirs: set[str] = set()
+        for row in all_summaries:
+            parts = row["file_path"].split("/")
+            # Register all ancestor directories
+            for i in range(1, len(parts)):
+                dir_path = "/".join(parts[:i])
+                all_dirs.add(dir_path)
+            # Map file to its immediate parent directory
+            if len(parts) > 1:
+                parent = "/".join(parts[:-1])
+            else:
+                parent = "."
+            dir_files.setdefault(parent, []).append((parts[-1], row["summary"]))
+        # Root dir "." always exists if there are any files
+        all_dirs.add(".")
+
+        # Skip directories already summarized (resume-safe)
+        existing = self._store.get_all_directory_paths_from_summaries()
+        dirs_to_process = sorted(all_dirs - existing, key=lambda d: -d.count("/"))
+
+        total = len(dirs_to_process)
+        if total == 0:
+            print("All directories already summarized.")
+            return 0
+
+        print(f"Summarizing {total} directories...")
+        summarized = 0
+        consecutive_errors = 0
+        # Accumulate computed summaries for use by parent directories
+        dir_summary_cache: dict[str, str] = {}
+        # Load existing summaries into cache for parents that depend on them
+        for dp in existing:
+            row = self._store.get_directory_summary(dp)
+            if row:
+                dir_summary_cache[dp] = row["summary"]
+
+        for i, dir_path in enumerate(dirs_to_process, 1):
+            # Collect child file summaries
+            child_files = dir_files.get(dir_path, [])
+
+            # Collect child directory summaries (immediate children only)
+            child_dirs = []
+            for d in all_dirs | existing:
+                if d == dir_path:
+                    continue
+                # Check if d is an immediate child of dir_path
+                if dir_path == ".":
+                    # Immediate children of root: dirs with no "/" in their name
+                    if "/" not in d and d in dir_summary_cache:
+                        child_dirs.append((d, dir_summary_cache[d]))
+                else:
+                    # d must start with dir_path/ and have no further /
+                    if d.startswith(dir_path + "/"):
+                        remainder = d[len(dir_path) + 1:]
+                        if "/" not in remainder and d in dir_summary_cache:
+                            child_dirs.append((remainder, dir_summary_cache[d]))
+
+            # Build prompt
+            lines = [f"Directory: {dir_path}/\n"]
+            if child_files:
+                lines.append("Files:")
+                for fname, summary in sorted(child_files):
+                    lines.append(f"  {fname} — {summary}")
+            if child_dirs:
+                lines.append("Subdirectories:")
+                for dname, summary in sorted(child_dirs):
+                    lines.append(f"  {dname}/ — {summary}")
+
+            prompt = "\n".join(lines)
+
+            try:
+                summary = self._provider.generate(prompt, system=DIR_SYSTEM_PROMPT).strip()
+            except Exception as e:
+                err_str = str(e)
+                if "API_KEY_INVALID" in err_str or "PERMISSION_DENIED" in err_str:
+                    raise RuntimeError(f"API key error — aborting: {e}") from e
+                print(f"  Error summarizing {dir_path}/: {e}", file=sys.stderr)
+                consecutive_errors += 1
+                if consecutive_errors >= 5:
+                    raise RuntimeError(
+                        f"5 consecutive failures — aborting. Last error: {e}"
+                    ) from e
+                continue
+
+            consecutive_errors = 0
+            self._store.insert_directory_summary(dir_path, summary)
+            dir_summary_cache[dir_path] = summary
+            summarized += 1
+
+            if on_progress:
+                on_progress({
+                    "step": "summarize-dirs", "current": i, "total": total,
+                    "dir": dir_path,
+                })
+
+            if i % 20 == 0 or i == total:
+                print(f"  {i}/{total} directories processed ({summarized} summarized)")
+
+            if self._delay > 0:
+                time.sleep(self._delay)
+
+        print(f"Directory summarization complete: {summarized} directories summarized")
         return summarized
 
     def _get_summarized_paths(self) -> set[str]:

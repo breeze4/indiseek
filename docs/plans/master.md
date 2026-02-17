@@ -99,33 +99,33 @@ Add bottom-up LLM directory summaries. This phase covers the storage layer, summ
 **Implementation:**
 
 In `src/indiseek/storage/sqlite_store.py`:
-- [ ] Add `CREATE TABLE IF NOT EXISTS directory_summaries (id INTEGER PRIMARY KEY, dir_path TEXT UNIQUE, summary TEXT NOT NULL)`
-- [ ] Add `insert_directory_summary(dir_path, summary)` — INSERT OR REPLACE
-- [ ] Add `insert_directory_summaries(summaries: list[tuple[str, str]])` — batch insert
-- [ ] Add `get_directory_summary(dir_path) -> dict | None`
-- [ ] Add `get_directory_summaries(paths: list[str]) -> dict[str, str]` — batch lookup
-- [ ] Add `get_all_directory_paths_from_summaries() -> set[str]`
+- [x] Add `CREATE TABLE IF NOT EXISTS directory_summaries (id INTEGER PRIMARY KEY, dir_path TEXT UNIQUE, summary TEXT NOT NULL)`
+- [x] Add `insert_directory_summary(dir_path, summary)` — INSERT OR REPLACE
+- [x] Add `insert_directory_summaries(summaries: list[tuple[str, str]])` — batch insert
+- [x] Add `get_directory_summary(dir_path) -> dict | None`
+- [x] Add `get_directory_summaries(paths: list[str]) -> dict[str, str]` — batch lookup
+- [x] Add `get_all_directory_paths_from_summaries() -> set[str]`
 
 In `src/indiseek/indexer/summarizer.py`:
-- [ ] Add `summarize_directories()` method to `Summarizer` class
-- [ ] Walk directories bottom-up (deepest first) using paths from `file_summaries`
-- [ ] For each directory: collect child file summaries + child directory summaries (already computed), send to Gemini Flash
-- [ ] Skip directories already in `directory_summaries` (resume-safe)
-- [ ] Support `on_progress` callback
-- [ ] 0.5s delay between API calls
+- [x] Add `summarize_directories()` method to `Summarizer` class
+- [x] Walk directories bottom-up (deepest first) using paths from `file_summaries`
+- [x] For each directory: collect child file summaries + child directory summaries (already computed), send to Gemini Flash
+- [x] Skip directories already in `directory_summaries` (resume-safe)
+- [x] Support `on_progress` callback
+- [x] 0.5s delay between API calls
 
 In `src/indiseek/indexer/pipeline.py`:
-- [ ] Add call to `summarize_directories()` after file summarization step
-- [ ] Only runs when `--summarize` flag is set
-- [ ] Add progress reporting
+- [x] Add call to `summarize_directories()` after file summarization step
+- [x] Only runs when `--summarize` flag is set
+- [x] Add progress reporting
 
 Tests:
-- [ ] Add tests for directory_summaries CRUD in sqlite_store
-- [ ] Add test for summarize_directories with mocked LLM calls
+- [x] Add tests for directory_summaries CRUD in sqlite_store
+- [x] Add test for summarize_directories with mocked LLM calls
 
 **Verify:**
-- [ ] `pytest` passes
-- [ ] `ruff check src/` clean
+- [x] `pytest` passes
+- [x] `ruff check src/` clean
 
 ---
 

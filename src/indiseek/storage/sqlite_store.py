@@ -136,6 +136,12 @@ class SqliteStore:
                 line_count INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS directory_summaries (
+                id INTEGER PRIMARY KEY,
+                dir_path TEXT UNIQUE,
+                summary TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT
@@ -383,6 +389,48 @@ class SqliteStore:
                 node = node.setdefault(part, {})
             node[parts[-1]] = row["summary"]
         return tree
+
+    # ── Directory summary operations ──
+
+    def insert_directory_summary(self, dir_path: str, summary: str) -> None:
+        """Insert or replace a directory summary."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO directory_summaries (dir_path, summary) VALUES (?, ?)",
+            (dir_path, summary),
+        )
+        self._conn.commit()
+
+    def insert_directory_summaries(self, summaries: list[tuple[str, str]]) -> None:
+        """Batch insert directory summaries. Each tuple: (dir_path, summary)."""
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO directory_summaries (dir_path, summary) VALUES (?, ?)",
+            summaries,
+        )
+        self._conn.commit()
+
+    def get_directory_summary(self, dir_path: str) -> dict | None:
+        """Get a single directory summary by path."""
+        cur = self._conn.execute(
+            "SELECT * FROM directory_summaries WHERE dir_path = ?", (dir_path,)
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def get_directory_summaries(self, paths: list[str]) -> dict[str, str]:
+        """Batch lookup directory summaries. Returns {dir_path: summary}."""
+        if not paths:
+            return {}
+        placeholders = ",".join("?" for _ in paths)
+        cur = self._conn.execute(
+            f"SELECT dir_path, summary FROM directory_summaries WHERE dir_path IN ({placeholders})",  # noqa: S608
+            paths,
+        )
+        return {row["dir_path"]: row["summary"] for row in cur.fetchall()}
+
+    def get_all_directory_paths_from_summaries(self) -> set[str]:
+        """Return all directory paths that have summaries."""
+        cur = self._conn.execute("SELECT dir_path FROM directory_summaries")
+        return {row[0] for row in cur.fetchall()}
 
     # ── File contents operations ──
 

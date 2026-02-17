@@ -226,3 +226,180 @@ class TestGeminiProviderGenerate:
 
         provider = GeminiProvider(api_key="test-key", generation_model="gemini-pro")
         assert provider._generation_model == "gemini-pro"
+
+
+# ── Directory summary storage tests ──
+
+
+class TestDirectorySummaryStorage:
+    def test_insert_and_retrieve(self, store: SqliteStore) -> None:
+        store.insert_directory_summary("src/server", "Server-side HTTP handlers.")
+        result = store.get_directory_summary("src/server")
+        assert result is not None
+        assert result["dir_path"] == "src/server"
+        assert result["summary"] == "Server-side HTTP handlers."
+
+    def test_upsert_replaces(self, store: SqliteStore) -> None:
+        store.insert_directory_summary("src", "Old summary.")
+        store.insert_directory_summary("src", "New summary.")
+        result = store.get_directory_summary("src")
+        assert result["summary"] == "New summary."
+
+    def test_missing_returns_none(self, store: SqliteStore) -> None:
+        result = store.get_directory_summary("nonexistent")
+        assert result is None
+
+    def test_batch_insert(self, store: SqliteStore) -> None:
+        store.insert_directory_summaries([
+            ("src", "Source code root."),
+            ("src/server", "Server modules."),
+            ("src/client", "Client modules."),
+        ])
+        assert store.count("directory_summaries") == 3
+
+    def test_batch_lookup(self, store: SqliteStore) -> None:
+        store.insert_directory_summaries([
+            ("src", "Source root."),
+            ("src/server", "Server."),
+            ("lib", "Library."),
+        ])
+        result = store.get_directory_summaries(["src", "lib", "missing"])
+        assert result == {"src": "Source root.", "lib": "Library."}
+
+    def test_batch_lookup_empty_list(self, store: SqliteStore) -> None:
+        result = store.get_directory_summaries([])
+        assert result == {}
+
+    def test_get_all_directory_paths(self, store: SqliteStore) -> None:
+        store.insert_directory_summaries([
+            ("src", "Source."),
+            ("src/server", "Server."),
+        ])
+        paths = store.get_all_directory_paths_from_summaries()
+        assert paths == {"src", "src/server"}
+
+    def test_get_all_directory_paths_empty(self, store: SqliteStore) -> None:
+        paths = store.get_all_directory_paths_from_summaries()
+        assert paths == set()
+
+
+# ── Directory summarizer tests ──
+
+
+class TestSummarizeDirectories:
+    def test_summarize_directories_basic(self, store: SqliteStore) -> None:
+        """Bottom-up summarization with a simple tree: root has two files, one subdir."""
+        from indiseek.indexer.summarizer import Summarizer
+
+        # Seed file summaries
+        store.insert_file_summaries([
+            ("src/server/index.ts", "Server entry point.", "ts", 50),
+            ("src/server/hmr.ts", "HMR handler.", "ts", 100),
+            ("src/client/main.ts", "Client entry point.", "ts", 30),
+            ("readme.md", "Project documentation.", "markdown", 10),
+        ])
+
+        call_count = 0
+        def mock_generate(prompt: str, system: str | None = None) -> str:
+            nonlocal call_count
+            call_count += 1
+            # Return a summary that includes the directory name from the prompt
+            # The prompt starts with "Directory: <path>/\n"
+            dir_line = prompt.split("\n")[0]
+            dir_name = dir_line.replace("Directory: ", "").rstrip("/")
+            return f"Summary of {dir_name}."
+
+        provider = MagicMock()
+        provider.generate = MagicMock(side_effect=mock_generate)
+        summarizer = Summarizer(store, provider=provider, delay=0)
+
+        count = summarizer.summarize_directories()
+
+        # Should summarize: src/server, src/client, src, . (root)
+        assert count == 4
+        assert store.count("directory_summaries") == 4
+
+        # Deepest dirs processed first
+        assert store.get_directory_summary("src/server") is not None
+        assert store.get_directory_summary("src/client") is not None
+        assert store.get_directory_summary("src") is not None
+        assert store.get_directory_summary(".") is not None
+
+    def test_summarize_directories_skips_existing(self, store: SqliteStore) -> None:
+        """Already-summarized directories are skipped (resume-safe)."""
+        from indiseek.indexer.summarizer import Summarizer
+
+        store.insert_file_summaries([
+            ("src/a.ts", "File A.", "ts", 10),
+            ("src/b.ts", "File B.", "ts", 20),
+        ])
+        # Pre-insert one directory summary
+        store.insert_directory_summary("src", "Already done.")
+
+        provider = _make_mock_provider("New summary.")
+        summarizer = Summarizer(store, provider=provider, delay=0)
+
+        count = summarizer.summarize_directories()
+        # Only root "." should be summarized, "src" was skipped
+        assert count == 1
+        # "src" should still have the old summary
+        assert store.get_directory_summary("src")["summary"] == "Already done."
+
+    def test_summarize_directories_no_file_summaries(self, store: SqliteStore) -> None:
+        """Returns 0 when there are no file summaries."""
+        from indiseek.indexer.summarizer import Summarizer
+
+        provider = _make_mock_provider("Summary.")
+        summarizer = Summarizer(store, provider=provider, delay=0)
+
+        count = summarizer.summarize_directories()
+        assert count == 0
+
+    def test_summarize_directories_progress_callback(self, store: SqliteStore) -> None:
+        """on_progress callback is called for each directory."""
+        from indiseek.indexer.summarizer import Summarizer
+
+        store.insert_file_summaries([
+            ("a.ts", "Root file.", "ts", 5),
+            ("src/b.ts", "Nested file.", "ts", 10),
+        ])
+
+        provider = _make_mock_provider("Dir summary.")
+        summarizer = Summarizer(store, provider=provider, delay=0)
+
+        progress_events = []
+        count = summarizer.summarize_directories(
+            on_progress=lambda e: progress_events.append(e)
+        )
+
+        assert count == 2  # "src" and "."
+        assert len(progress_events) == 2
+        assert all(e["step"] == "summarize-dirs" for e in progress_events)
+
+    def test_summarize_directories_uses_child_dir_summaries(self, store: SqliteStore) -> None:
+        """Parent directories see child directory summaries in their prompt."""
+        from indiseek.indexer.summarizer import Summarizer
+
+        store.insert_file_summaries([
+            ("src/server/index.ts", "Server entry.", "ts", 50),
+        ])
+
+        prompts_seen: list[str] = []
+
+        def capture_generate(prompt: str, system: str | None = None) -> str:
+            prompts_seen.append(prompt)
+            return "Summary."
+
+        provider = MagicMock()
+        provider.generate = MagicMock(side_effect=capture_generate)
+        summarizer = Summarizer(store, provider=provider, delay=0)
+
+        summarizer.summarize_directories()
+
+        # 3 dirs: src/server, src, .
+        assert len(prompts_seen) == 3
+
+        # The "src" prompt should mention "server/" as a subdirectory
+        src_prompt = [p for p in prompts_seen if p.startswith("Directory: src/\n")][0]
+        assert "server/" in src_prompt
+        assert "Subdirectories:" in src_prompt

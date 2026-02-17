@@ -127,6 +127,28 @@ def run_scip(
     return counts
 
 
+def run_summarize_dirs(
+    store: SqliteStore,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """Summarize directories bottom-up using child file/dir summaries.
+
+    Returns {"directories_summarized": N}.
+    """
+    from indiseek.indexer.summarizer import Summarizer
+
+    if on_progress:
+        on_progress({"step": "summarize-dirs", "status": "starting"})
+
+    summarizer = Summarizer(store)
+    n_summarized = summarizer.summarize_directories(on_progress=on_progress)
+
+    if on_progress:
+        on_progress({"step": "summarize-dirs", "status": "done", "directories_summarized": n_summarized})
+
+    return {"directories_summarized": n_summarized}
+
+
 def run_lexical(
     store: SqliteStore,
     tantivy_path: Path,
