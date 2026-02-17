@@ -15,7 +15,7 @@ from indiseek import config
 from indiseek.indexer.lexical import LexicalIndexer
 from indiseek.storage.sqlite_store import SqliteStore
 from indiseek.storage.vector_store import VectorStore
-from indiseek.tools.read_file import format_file_content, read_file
+from indiseek.tools.read_file import format_file_content
 from indiseek.tools.read_map import read_map
 from indiseek.tools.resolve_symbol import resolve_symbol
 from indiseek.tools.search_code import (
@@ -73,12 +73,17 @@ call this if you need detail on a specific directory.
 ## Strategy
 1. **Plan first**: In your first turn, state your research plan. What are you looking \
 for and which tools will you use first?
-2. **Batch calls**: When you need multiple pieces of information, call multiple \
-tools in a single turn. For example, if you find a function and want to see its \
-definition AND who calls it, call `resolve_symbol` twice in one turn.
-3. **Targeted search**: Start with 1-2 targeted searches to find relevant files.
-4. **Precise navigation**: Once you have a symbol name, use `resolve_symbol` \
-rather than more searches. It is 100% accurate.
+2. **Batch calls**: You MUST call multiple tools in a single turn whenever you need \
+independent pieces of information. Every iteration costs budget — combine independent \
+lookups into a single turn to maximize what you learn per iteration. Examples:
+   - Found a function? Call `resolve_symbol(name, 'definition')` AND `resolve_symbol(name, 'callers')` together.
+   - Starting research? Call `search_code(query)` AND `read_map(path)` in the same turn.
+   - Reading related files? Call `read_file` multiple times in one turn.
+3. **Targeted search**: Start with 1-2 targeted searches to find relevant files and symbol names.
+4. **Switch to resolve_symbol early**: After your initial 1-2 searches, STOP searching and \
+switch to `resolve_symbol` to navigate the call graph. It gives you precise definitions, \
+references, callers, and callees — far more reliable than searching for symbol names. \
+This is your primary navigation tool after the initial discovery phase.
 5. **Cite evidence**: Always cite specific file paths and line numbers in your answer.
 
 ### Example: Parallel Research
@@ -348,7 +353,7 @@ class AgentLoop:
     def _maybe_inject_tool_hint(self, iteration: int) -> str | None:
         """Return a hint nudging the model toward better behavior based on progress."""
         hints = []
-        if iteration >= 5 and not self._resolve_symbol_used:
+        if iteration >= 3 and not self._resolve_symbol_used:
             hints.append(
                 "You haven't used resolve_symbol yet. It provides precise "
                 "cross-reference data (definition, references, callers, callees) and "
@@ -475,7 +480,6 @@ class AgentLoop:
                 args = dict(call.args) if call.args else {}
                 logger.info("  -> %s(%s)", call.name, ", ".join(f"{k}={v!r}" for k, v in args.items()))
                 
-                raw_result: str | None = None
                 try:
                     # Special case for search_code to get raw results for summary
                     if call.name == "search_code":
@@ -490,6 +494,17 @@ class AgentLoop:
                             result = format_results(results, query)
                             self._query_cache.put(query, result)
                             summary = f"Search: {query} -> {summarize_results(results)}"
+                            # Contextual suggestion: nudge toward resolve_symbol
+                            if not self._resolve_symbol_used and results:
+                                sym_names = list(dict.fromkeys(
+                                    r.symbol_name for r in results if r.symbol_name
+                                ))[:5]
+                                if sym_names:
+                                    result += (
+                                        f"\n[TIP: Found symbols: {', '.join(sym_names)}. "
+                                        "Use resolve_symbol to get precise definitions, "
+                                        "callers, and callees instead of more searches.]"
+                                    )
                     else:
                         result = self._execute_tool(call.name, args)
                         # Build summary based on tool
@@ -544,7 +559,7 @@ class AgentLoop:
                     EvidenceStep(
                         tool=call.name,
                         args=args,
-                        summary=result[:200] + "..." if len(result) > 200 else result,
+                        summary=summary,
                     )
                 )
 

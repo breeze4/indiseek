@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from google.genai import types
 
 from indiseek.agent.loop import (
     SYSTEM_PROMPT_TEMPLATE,
@@ -238,22 +239,60 @@ class TestSearchQueryCaching:
 
 
 class TestResolveSymbolHints:
-    def test_hint_injected_at_iteration_5(self, store, repo_dir, searcher):
+    def test_hint_injected_at_iteration_3(self, store, repo_dir, searcher):
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         agent._resolve_symbol_used = False
-        hint = agent._maybe_inject_tool_hint(iteration=5)
+        hint = agent._maybe_inject_tool_hint(iteration=3)
         assert hint is not None
         assert "resolve_symbol" in hint
 
-    def test_no_hint_before_iteration_5(self, store, repo_dir, searcher):
+    def test_no_hint_before_iteration_3(self, store, repo_dir, searcher):
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         agent._resolve_symbol_used = False
-        assert agent._maybe_inject_tool_hint(iteration=3) is None
+        assert agent._maybe_inject_tool_hint(iteration=2) is None
 
     def test_no_hint_if_already_used(self, store, repo_dir, searcher):
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         agent._resolve_symbol_used = True
         assert agent._maybe_inject_tool_hint(iteration=6) is None
+
+    def test_search_code_contextual_suggestion(self, store, repo_dir):
+        """search_code results include resolve_symbol suggestion with symbol names."""
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [
+            HybridResult(
+                chunk_id=1, file_path="src/main.ts", symbol_name="createServer",
+                chunk_type="function", content="function createServer() {}", score=0.9,
+                match_type="lexical",
+            ),
+            HybridResult(
+                chunk_id=2, file_path="src/main.ts", symbol_name="startServer",
+                chunk_type="function", content="function startServer() {}", score=0.8,
+                match_type="lexical",
+            ),
+        ]
+        agent = AgentLoop(store, repo_dir, mock_searcher, api_key="fake")
+
+        fn_resp = _make_fn_call_response("search_code", {"query": "server"})
+        text_resp = _make_text_response("Done.")
+
+        agent._client = MagicMock()
+        agent._client.models.generate_content.side_effect = [fn_resp, text_resp]
+
+        # Capture the result string passed to the function response
+        captured_results = []
+        orig_from_fn = types.Part.from_function_response
+        def _capture_fn_response(**kwargs):
+            captured_results.append(kwargs.get("response", {}).get("result", ""))
+            return orig_from_fn(**kwargs)
+
+        with patch.object(types.Part, "from_function_response", side_effect=_capture_fn_response):
+            result = agent.run("Find server code")
+
+        assert len(captured_results) == 1
+        assert "[TIP:" in captured_results[0]
+        assert "createServer" in captured_results[0]
+        assert "resolve_symbol" in captured_results[0]
 
 
 # ── Parallel tool call tests ──
@@ -485,7 +524,7 @@ class TestAgentLoop:
         assert len(result.evidence) == 1
 
     def test_budget_injected_into_evidence(self, store, repo_dir, searcher):
-        """Tool results include remaining iteration count."""
+        """Evidence summary uses human-readable format, not raw result."""
         store.insert_file_summaries([
             ("src/main.ts", "Main entry", "ts", 3),
         ])
@@ -498,9 +537,8 @@ class TestAgentLoop:
         agent._client.models.generate_content.side_effect = [fn_resp, text_resp]
 
         result = agent.run("Test budget")
-        # First iteration => "Iteration 1/15, 1 tool calls used"
-        assert "Iteration 1/15" in result.evidence[0].summary
-        assert "tool calls used" in result.evidence[0].summary
+        # Evidence summary should be the human-readable format
+        assert result.evidence[0].summary == "Map: src"
 
     def test_system_prompt_includes_repo_map(self, store, repo_dir, searcher):
         """Dynamic system prompt includes the read_map output."""
