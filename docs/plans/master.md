@@ -316,14 +316,14 @@ New Repos page for listing, adding, and managing repos.
 
 **Implementation:**
 
-- [ ] **7.1** Add repo API types and functions to `frontend/src/api/client.ts`: `Repo`, `FreshnessCheck` interfaces; `fetchRepos()`, `fetchRepo()`, `createRepo()`, `deleteRepo()`, `checkRepoFreshness()`, `syncRepo()`.
-- [ ] **7.2** Add repo hooks to `frontend/src/api/hooks.ts`: `useRepos()`, `useRepo()`, `useCreateRepo()`, `useDeleteRepo()`, `useCheckFreshness()`, `useSyncRepo()`.
-- [ ] **7.3** Create `frontend/src/pages/Repos.tsx`: repo cards with name/URL/status, freshness badge, action buttons (Check/Sync/View), "Add Repo" form, delete with confirmation.
-- [ ] **7.4** Add to `App.tsx`: route `/repos`, nav item with GitBranch icon, positioned first in nav.
+- [x] **7.1** Add repo API types and functions to `frontend/src/api/client.ts`: `Repo`, `FreshnessCheck` interfaces; `fetchRepos()`, `fetchRepo()`, `createRepo()`, `deleteRepo()`, `checkRepoFreshness()`, `syncRepo()`.
+- [x] **7.2** Add repo hooks to `frontend/src/api/hooks.ts`: `useRepos()`, `useRepo()`, `useCreateRepo()`, `useDeleteRepo()`, `useCheckFreshness()`, `useSyncRepo()`.
+- [x] **7.3** Create `frontend/src/pages/Repos.tsx`: repo cards with name/URL/status, freshness badge, action buttons (Check/Sync/View), "Add Repo" form, delete with confirmation.
+- [x] **7.4** Add to `App.tsx`: route `/repos`, nav item with GitBranch icon, positioned first in nav.
 
 **Verify:**
-- [ ] `cd frontend && npm run build` succeeds
-- [ ] `pytest` passes
+- [x] `cd frontend && npm run build` succeeds
+- [x] `pytest` passes
 
 ---
 

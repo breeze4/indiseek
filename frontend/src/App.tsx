@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink } from 'react-router-dom'
-import { Database, FolderTree, Search, Play, MessageSquare } from 'lucide-react'
+import { Database, FolderTree, Search, Play, MessageSquare, GitBranch } from 'lucide-react'
 import Overview from './pages/Overview.tsx'
 import FileTree from './pages/FileTree.tsx'
 import FileDetail from './pages/FileDetail.tsx'
@@ -7,8 +7,10 @@ import ChunkDetail from './pages/ChunkDetail.tsx'
 import SearchPage from './pages/Search.tsx'
 import Operations from './pages/Operations.tsx'
 import Query from './pages/Query.tsx'
+import Repos from './pages/Repos.tsx'
 
 const navItems = [
+  { to: '/repos', icon: GitBranch, label: 'Repos' },
   { to: '/', icon: Database, label: 'Overview' },
   { to: '/files', icon: FolderTree, label: 'Files' },
   { to: '/search', icon: Search, label: 'Search' },
@@ -41,6 +43,7 @@ function App() {
       </nav>
       <main className="flex-1 p-6 overflow-auto">
         <Routes>
+          <Route path="/repos" element={<Repos />} />
           <Route path="/" element={<Overview />} />
           <Route path="/files" element={<FileTree />} />
           <Route path="/files/*" element={<FileDetail />} />

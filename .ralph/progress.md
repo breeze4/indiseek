@@ -641,3 +641,37 @@ _Session duration: 6m 9s — 2026-02-17 15:30:58_
 ### Notes
 - Tests use a `_make_store_factory` pattern to create per-request SQLite connections (thread-safe for FastAPI's TestClient which uses async event loops).
 - The sync endpoint does a simplified incremental index for changed files — it re-parses with tree-sitter and stores file contents, then does a full lexical index rebuild. Embedding and summarization of changed files are not included in sync (they can be run separately via the `/run/*` endpoints).
+
+_Session duration: 11m 39s — 2026-02-17 15:42:37_
+
+---
+
+## Master Phase 13: Multi-Repo — Frontend Repos Page
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+
+### Files Created
+- `frontend/src/pages/Repos.tsx` — Repos page with repo cards (name/URL/status, freshness badge, Check/Sync/View buttons, delete with confirmation), Add Repo form (name + git URL → clone), live SSE progress for clone/sync tasks
+
+### Files Modified
+- `frontend/src/api/client.ts` — added `Repo` and `FreshnessCheck` interfaces; added `fetchRepos()`, `fetchRepo()`, `createRepo()`, `deleteRepo()`, `checkRepoFreshness()`, `syncRepo()` API functions
+- `frontend/src/api/hooks.ts` — added `useRepos()`, `useRepo()`, `useCreateRepo()`, `useDeleteRepo()`, `useCheckFreshness()`, `useSyncRepo()` TanStack Query hooks
+- `frontend/src/App.tsx` — added `/repos` route with `Repos` component, added GitBranch nav item positioned first in nav sidebar
+
+### Test Results
+- 323/323 tests passing (no Python changes in this phase)
+- `cd frontend && npm run build` — succeeds, no TypeScript errors
+
+### Implementation Details
+- **Repo cards**: Each repo displayed as a card with name, status badge (active/inactive), URL, local path, indexed SHA, last indexed date. Freshness badge shows "up to date", "N behind", "not indexed", or "unknown commits behind" depending on state.
+- **Freshness check**: Per-repo Check button triggers `POST /repos/{id}/check`, result stored in local state and displayed as freshness badge + changed files list.
+- **Sync**: Per-repo Sync button triggers `POST /repos/{id}/sync`, shows live SSE progress via `useTaskStream`.
+- **Add Repo form**: Name + Git URL input with Clone button. Triggers `POST /repos` which clones via TaskManager. Live progress shown via SSE.
+- **Delete with confirmation**: Delete button shows Confirm/Cancel buttons to prevent accidental deletion.
+- **Nav placement**: Repos nav item is first in the sidebar, using GitBranch icon from lucide-react.
+
+### Notes
+- This is a frontend-only phase — no Python changes needed. The backend API endpoints were already added in Phase 12.
+- The page follows existing patterns from Operations.tsx (SSE progress, mutation hooks) and other pages (card layout, status badges).
+- The "View" button links to `/dashboard/files` — will be updated in Phase 14 when pages become repo-scoped.

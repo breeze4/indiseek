@@ -132,6 +132,26 @@ export interface QueryHistoryItem {
   duration_secs: number | null
 }
 
+export interface Repo {
+  id: number
+  name: string
+  url: string | null
+  local_path: string
+  created_at: string
+  last_indexed_at: string | null
+  indexed_commit_sha: string | null
+  current_commit_sha: string | null
+  commits_behind: number
+  status: string
+}
+
+export interface FreshnessCheck {
+  indexed_sha: string | null
+  current_sha: string
+  commits_behind: number
+  changed_files: string[]
+}
+
 export interface QueryHistoryDetail extends QueryHistoryItem {
   answer: string | null
   evidence: QueryEvidence[] | null
@@ -178,6 +198,32 @@ export const fetchQueryHistory = () =>
 
 export const fetchQueryDetail = (id: number) =>
   apiFetch<QueryHistoryDetail>(`/queries/${id}`)
+
+export const fetchRepos = () => apiFetch<Repo[]>('/repos')
+
+export const fetchRepo = (repoId: number) => apiFetch<Repo>(`/repos/${repoId}`)
+
+export const createRepo = (name: string, url: string, shallow = true) =>
+  apiFetch<RunResponse>('/repos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, url, shallow }),
+  })
+
+export const deleteRepo = (repoId: number) =>
+  apiFetch<{ deleted: boolean; repo_id: number }>(`/repos/${repoId}`, {
+    method: 'DELETE',
+  })
+
+export const checkRepoFreshness = (repoId: number) =>
+  apiFetch<FreshnessCheck>(`/repos/${repoId}/check`, {
+    method: 'POST',
+  })
+
+export const syncRepo = (repoId: number) =>
+  apiFetch<RunResponse>(`/repos/${repoId}/sync`, {
+    method: 'POST',
+  })
 
 export function createTaskStream(taskId: string): EventSource {
   return new EventSource(`${API_BASE}/tasks/${taskId}/stream`)

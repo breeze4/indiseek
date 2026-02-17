@@ -12,6 +12,12 @@ import {
   fetchQueryHistory,
   fetchQueryDetail,
   createTaskStream,
+  fetchRepos,
+  fetchRepo,
+  createRepo,
+  deleteRepo,
+  checkRepoFreshness,
+  syncRepo,
   type TaskInfo,
   type QueryCachedResponse,
   type RunResponse,
@@ -92,6 +98,61 @@ export function useQueryDetail(id: number) {
     queryKey: ['queryDetail', id],
     queryFn: () => fetchQueryDetail(id),
     enabled: id > 0,
+  })
+}
+
+export function useRepos() {
+  return useQuery({ queryKey: ['repos'], queryFn: fetchRepos })
+}
+
+export function useRepo(repoId: number) {
+  return useQuery({
+    queryKey: ['repo', repoId],
+    queryFn: () => fetchRepo(repoId),
+    enabled: repoId > 0,
+  })
+}
+
+export function useCreateRepo() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, url, shallow }: { name: string; url: string; shallow?: boolean }) =>
+      createRepo(name, url, shallow),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['repos'] })
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    },
+  })
+}
+
+export function useDeleteRepo() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (repoId: number) => deleteRepo(repoId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['repos'] })
+    },
+  })
+}
+
+export function useCheckFreshness() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (repoId: number) => checkRepoFreshness(repoId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['repos'] })
+    },
+  })
+}
+
+export function useSyncRepo() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (repoId: number) => syncRepo(repoId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['repos'] })
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    },
   })
 }
 
