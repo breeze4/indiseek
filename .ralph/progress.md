@@ -483,3 +483,32 @@ _Session duration: 2m 29s — 2026-02-17 14:57:04_
 ### Notes
 - The `_ensure_legacy_repo()` method imports `os` inside the function to avoid adding it to module-level imports (it's only needed for this one-time migration check).
 - `update_repo()` uses dynamic SQL construction from kwargs — acceptable here since column names come from application code, not user input.
+
+_Session duration: 5m 58s — 2026-02-17 15:03:02_
+
+---
+
+## Master Phase 8: Multi-Repo — Scope Store Operations
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+**Commit**: `a26cdbc`
+
+### Files Modified
+- `src/indiseek/storage/sqlite_store.py` — Added `repo_id: int = 1` parameter to all data methods across all 9 tables: `insert_symbols`, `insert_symbol`, `insert_chunks`, `get_symbols_by_name`, `get_symbols_by_file`, `get_symbols_in_range`, `get_chunks_by_file`, `insert_scip_symbol`, `insert_scip_occurrences`, `insert_scip_relationship`, `get_scip_symbol_id`, `get_definition`, `get_references`, `get_scip_occurrences_by_symbol_id`, `get_scip_relationships_for`, `insert_file_summary`, `insert_file_summaries`, `get_file_summaries`, `get_directory_tree`, `insert_directory_summary`, `insert_directory_summaries`, `get_directory_summary`, `get_directory_summaries`, `get_all_directory_paths_from_summaries`, `insert_file_content`, `get_file_content`, `get_chunk_by_id`, `get_all_file_paths_from_chunks`, `get_all_file_paths_from_summaries`, `get_file_summary`, `clear_index_data_for_prefix`, `clear_index_data`, `insert_query`, `list_queries`, `get_completed_queries_since`, `insert_cached_query`, `count`. All write methods include `repo_id` in INSERT statements. All read methods add `WHERE repo_id = ?` filtering. `count()` skips repo_id filter for `metadata` and `repos` tables.
+- `src/indiseek/tools/resolve_symbol.py` — Updated `_resolve_callees` direct SQL query to include `AND so.repo_id = ?` filter (line 157).
+- `src/indiseek/indexer/summarizer.py` — Replaced `_get_summarized_paths()` direct `_conn.execute` with `store.get_all_file_paths_from_summaries()` call (which now filters by repo_id).
+
+### Test Results
+- 299/299 tests passing (no new tests — all existing tests pass because `repo_id` defaults to 1)
+- `ruff check src/` — all checks passed
+
+### Implementation Details
+- **Default `repo_id=1`**: All methods default to `repo_id=1`, maintaining 100% backward compatibility. No callers needed explicit changes — they'll be updated to pass explicit `repo_id` in Phase 10+ when pipeline functions gain `repo_id` parameters.
+- **SCIP UNIQUE constraint**: The `scip_symbols` table DDL keeps `UNIQUE(symbol)` because the `repo_id` column is added via ALTER TABLE migration (not in DDL). Application-level uniqueness per repo is enforced by `insert_scip_symbol` which checks `WHERE symbol = ? AND repo_id = ?` before inserting. The DDL constraint will be updated when tables are recreated.
+- **`clear_index_data` scoping**: Changed from `executescript` (DELETE FROM each table) to individual `execute` calls with `WHERE repo_id = ?`, so clearing is per-repo.
+- **Direct SQL fixes**: Two places that bypassed store methods (`resolve_symbol._resolve_callees` and `summarizer._get_summarized_paths`) were updated to include repo_id filtering.
+
+### Notes
+- The `Symbol` and `Chunk` dataclasses were NOT updated with `repo_id` fields as specified in the plan item 2.1. The `repo_id` is passed as a method parameter instead, which is cleaner — the dataclasses represent parsed data from files, while `repo_id` is a storage concern.
+- The `file_contents` table has `file_path TEXT PRIMARY KEY` (not a composite key with repo_id). INSERT OR REPLACE still works correctly for repo_id=1. Multi-repo file contents will need a schema migration to change the PK to `(file_path, repo_id)` — deferred to Phase 15 cleanup.

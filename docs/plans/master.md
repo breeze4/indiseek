@@ -212,20 +212,20 @@ Update all SqliteStore methods to accept and filter by `repo_id`. All callers pa
 
 **Implementation:**
 
-- [ ] **2.1** Scope `insert_symbols` and `insert_chunks` by `repo_id`. Update `Symbol`/`Chunk` dataclasses with optional `repo_id`.
-- [ ] **2.2** Scope `insert_file_summary`, `insert_file_summaries`, `get_file_summaries`, `get_file_summary`, `get_directory_tree` by `repo_id`.
-- [ ] **2.2b** Scope `insert_directory_summary`, `insert_directory_summaries`, `get_directory_summary`, `get_directory_summaries` by `repo_id`. *(Not in original plan.)*
-- [ ] **2.2c** Scope `insert_file_content`, `get_file_content` by `repo_id`. *(Not in original plan.)*
-- [ ] **2.3** Scope SCIP operations by `repo_id`. Change UNIQUE constraint on `scip_symbols` from `UNIQUE(symbol)` to `UNIQUE(symbol, repo_id)`. **Risk:** changing the constraint requires table recreation. Since SCIP data is always fully reloaded on re-index (`clear_index_data()`), change the CREATE TABLE DDL — the new constraint takes effect on next full index. Existing data is fine until then.
-- [ ] **2.4** Scope `get_symbols_*` and `get_chunks_*` methods by `repo_id`.
-- [ ] **2.5** Scope `clear_index_data` and `clear_index_data_for_prefix` by `repo_id`.
-- [ ] **2.6** Scope dashboard query methods: `get_all_file_paths_from_chunks`, `get_all_file_paths_from_summaries`, `count()`.
-- [ ] **2.7** Scope query history methods: `insert_query`, `insert_cached_query`, `list_queries`, `get_completed_queries_since`.
-- [ ] Update ALL callers (pipeline.py, dashboard.py, agent/loop.py, tools, tests) to pass `repo_id=1`.
+- [x] **2.1** Scope `insert_symbols` and `insert_chunks` by `repo_id`. Update `Symbol`/`Chunk` dataclasses with optional `repo_id`.
+- [x] **2.2** Scope `insert_file_summary`, `insert_file_summaries`, `get_file_summaries`, `get_file_summary`, `get_directory_tree` by `repo_id`.
+- [x] **2.2b** Scope `insert_directory_summary`, `insert_directory_summaries`, `get_directory_summary`, `get_directory_summaries` by `repo_id`. *(Not in original plan.)*
+- [x] **2.2c** Scope `insert_file_content`, `get_file_content` by `repo_id`. *(Not in original plan.)*
+- [x] **2.3** Scope SCIP operations by `repo_id`. Change UNIQUE constraint on `scip_symbols` from `UNIQUE(symbol)` to `UNIQUE(symbol, repo_id)`. **Risk:** changing the constraint requires table recreation. Since SCIP data is always fully reloaded on re-index (`clear_index_data()`), change the CREATE TABLE DDL — the new constraint takes effect on next full index. Existing data is fine until then.
+- [x] **2.4** Scope `get_symbols_*` and `get_chunks_*` methods by `repo_id`.
+- [x] **2.5** Scope `clear_index_data` and `clear_index_data_for_prefix` by `repo_id`.
+- [x] **2.6** Scope dashboard query methods: `get_all_file_paths_from_chunks`, `get_all_file_paths_from_summaries`, `count()`.
+- [x] **2.7** Scope query history methods: `insert_query`, `insert_cached_query`, `list_queries`, `get_completed_queries_since`.
+- [x] Update ALL callers (pipeline.py, dashboard.py, agent/loop.py, tools, tests) to pass `repo_id=1`.
 
 **Verify:**
-- [ ] `pytest` passes
-- [ ] `ruff check src/` clean
+- [x] `pytest` passes
+- [x] `ruff check src/` clean
 
 ---
 

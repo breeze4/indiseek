@@ -155,8 +155,9 @@ def _resolve_callees(store: SqliteStore, symbol_name: str) -> str:
                FROM scip_occurrences so
                JOIN scip_symbols ss ON so.symbol_id = ss.id
                WHERE so.file_path = ? AND so.role = 'reference'
-                 AND so.start_line >= ? AND so.start_line <= ?""",
-            (file_path, start, end),
+                 AND so.start_line >= ? AND so.start_line <= ?
+                 AND so.repo_id = ?""",
+            (file_path, start, end, 1),
         )
         for row in cur.fetchall():
             scip_symbol = row[0]

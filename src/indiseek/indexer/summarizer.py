@@ -295,8 +295,7 @@ class Summarizer:
 
     def _get_summarized_paths(self) -> set[str]:
         """Return file paths that already have summaries in SQLite."""
-        cur = self._store._conn.execute("SELECT file_path FROM file_summaries")
-        return {row["file_path"] for row in cur.fetchall()}
+        return self._store.get_all_file_paths_from_summaries()
 
     def _get_source_files(self, repo_path: Path) -> list[Path]:
         """Get source files to summarize, respecting .gitignore via git ls-files."""

@@ -271,113 +271,119 @@ class SqliteStore:
         self._conn.execute("DELETE FROM repos WHERE id = ?", (repo_id,))
         self._conn.commit()
 
-    def clear_index_data(self) -> None:
+    def clear_index_data(self, repo_id: int = 1) -> None:
         """Delete all indexed data (symbols, chunks, SCIP, file contents) for a clean re-index."""
-        self._conn.executescript(
-            """
-            DELETE FROM scip_relationships;
-            DELETE FROM scip_occurrences;
-            DELETE FROM scip_symbols;
-            DELETE FROM chunks;
-            DELETE FROM symbols;
-            DELETE FROM file_contents;
-            """
-        )
+        for table in [
+            "scip_relationships", "scip_occurrences", "scip_symbols",
+            "chunks", "symbols", "file_contents",
+        ]:
+            self._conn.execute(f"DELETE FROM {table} WHERE repo_id = ?", (repo_id,))
         self._conn.commit()
 
     # ── Symbol operations ──
 
-    def insert_symbols(self, symbols: list[Symbol]) -> None:
+    def insert_symbols(self, symbols: list[Symbol], repo_id: int = 1) -> None:
         """Batch insert symbols."""
         self._conn.executemany(
             """INSERT INTO symbols
-               (file_path, name, kind, start_line, start_col, end_line, end_col, signature, parent_symbol_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (file_path, name, kind, start_line, start_col, end_line, end_col, signature, parent_symbol_id, repo_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (
                     s.file_path, s.name, s.kind,
                     s.start_line, s.start_col, s.end_line, s.end_col,
-                    s.signature, s.parent_symbol_id,
+                    s.signature, s.parent_symbol_id, repo_id,
                 )
                 for s in symbols
             ],
         )
         self._conn.commit()
 
-    def insert_symbol(self, symbol: Symbol) -> int:
+    def insert_symbol(self, symbol: Symbol, repo_id: int = 1) -> int:
         """Insert a single symbol and return its id."""
         cur = self._conn.execute(
             """INSERT INTO symbols
-               (file_path, name, kind, start_line, start_col, end_line, end_col, signature, parent_symbol_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (file_path, name, kind, start_line, start_col, end_line, end_col, signature, parent_symbol_id, repo_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 symbol.file_path, symbol.name, symbol.kind,
                 symbol.start_line, symbol.start_col, symbol.end_line, symbol.end_col,
-                symbol.signature, symbol.parent_symbol_id,
+                symbol.signature, symbol.parent_symbol_id, repo_id,
             ),
         )
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
 
-    def get_symbols_by_name(self, name: str) -> list[dict]:
-        cur = self._conn.execute("SELECT * FROM symbols WHERE name = ?", (name,))
+    def get_symbols_by_name(self, name: str, repo_id: int = 1) -> list[dict]:
+        cur = self._conn.execute(
+            "SELECT * FROM symbols WHERE name = ? AND repo_id = ?", (name, repo_id)
+        )
         return [dict(row) for row in cur.fetchall()]
 
-    def get_symbols_by_file(self, file_path: str) -> list[dict]:
-        cur = self._conn.execute("SELECT * FROM symbols WHERE file_path = ?", (file_path,))
+    def get_symbols_by_file(self, file_path: str, repo_id: int = 1) -> list[dict]:
+        cur = self._conn.execute(
+            "SELECT * FROM symbols WHERE file_path = ? AND repo_id = ?", (file_path, repo_id)
+        )
         return [dict(row) for row in cur.fetchall()]
 
-    def get_symbols_in_range(self, file_path: str, start_line: int, end_line: int) -> list[dict]:
+    def get_symbols_in_range(
+        self, file_path: str, start_line: int, end_line: int, repo_id: int = 1
+    ) -> list[dict]:
         """Find symbols whose definition starts within the given line range."""
         cur = self._conn.execute(
-            """SELECT * FROM symbols 
-               WHERE file_path = ? AND start_line >= ? AND start_line <= ?
+            """SELECT * FROM symbols
+               WHERE file_path = ? AND start_line >= ? AND start_line <= ? AND repo_id = ?
                ORDER BY start_line""",
-            (file_path, start_line, end_line),
+            (file_path, start_line, end_line, repo_id),
         )
         return [dict(row) for row in cur.fetchall()]
 
     # ── Chunk operations ──
 
-    def insert_chunks(self, chunks: list[Chunk]) -> None:
+    def insert_chunks(self, chunks: list[Chunk], repo_id: int = 1) -> None:
         """Batch insert chunks."""
         self._conn.executemany(
             """INSERT INTO chunks
-               (file_path, symbol_name, chunk_type, start_line, end_line, content, token_estimate)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (file_path, symbol_name, chunk_type, start_line, end_line, content, token_estimate, repo_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (
                     c.file_path, c.symbol_name, c.chunk_type,
-                    c.start_line, c.end_line, c.content, c.token_estimate,
+                    c.start_line, c.end_line, c.content, c.token_estimate, repo_id,
                 )
                 for c in chunks
             ],
         )
         self._conn.commit()
 
-    def get_chunks_by_file(self, file_path: str) -> list[dict]:
-        cur = self._conn.execute("SELECT * FROM chunks WHERE file_path = ?", (file_path,))
+    def get_chunks_by_file(self, file_path: str, repo_id: int = 1) -> list[dict]:
+        cur = self._conn.execute(
+            "SELECT * FROM chunks WHERE file_path = ? AND repo_id = ?", (file_path, repo_id)
+        )
         return [dict(row) for row in cur.fetchall()]
 
     # ── SCIP operations ──
 
-    def insert_scip_symbol(self, symbol: str, documentation: str | None = None) -> int:
+    def insert_scip_symbol(
+        self, symbol: str, documentation: str | None = None, repo_id: int = 1
+    ) -> int:
         """Insert a SCIP symbol and return its id. Returns existing id if duplicate."""
         cur = self._conn.execute(
-            "SELECT id FROM scip_symbols WHERE symbol = ?", (symbol,)
+            "SELECT id FROM scip_symbols WHERE symbol = ? AND repo_id = ?", (symbol, repo_id)
         )
         row = cur.fetchone()
         if row:
             return row[0]
         cur = self._conn.execute(
-            "INSERT INTO scip_symbols (symbol, documentation) VALUES (?, ?)",
-            (symbol, documentation),
+            "INSERT INTO scip_symbols (symbol, documentation, repo_id) VALUES (?, ?, ?)",
+            (symbol, documentation, repo_id),
         )
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
 
     def insert_scip_occurrences(
-        self, occurrences: list[tuple[int, str, int, int, int, int, str]]
+        self, occurrences: list[tuple[int, str, int, int, int, int, str]],
+        repo_id: int = 1,
     ) -> None:
         """Batch insert SCIP occurrences.
 
@@ -385,117 +391,126 @@ class SqliteStore:
         """
         self._conn.executemany(
             """INSERT INTO scip_occurrences
-               (symbol_id, file_path, start_line, start_col, end_line, end_col, role)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            occurrences,
+               (symbol_id, file_path, start_line, start_col, end_line, end_col, role, repo_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            [(*occ, repo_id) for occ in occurrences],
         )
         self._conn.commit()
 
     def insert_scip_relationship(
-        self, symbol_id: int, related_symbol_id: int, relationship: str
+        self, symbol_id: int, related_symbol_id: int, relationship: str, repo_id: int = 1
     ) -> None:
         """Insert a SCIP relationship between two symbols."""
         self._conn.execute(
-            """INSERT INTO scip_relationships (symbol_id, related_symbol_id, relationship)
-               VALUES (?, ?, ?)""",
-            (symbol_id, related_symbol_id, relationship),
+            """INSERT INTO scip_relationships (symbol_id, related_symbol_id, relationship, repo_id)
+               VALUES (?, ?, ?, ?)""",
+            (symbol_id, related_symbol_id, relationship, repo_id),
         )
         self._conn.commit()
 
-    def get_scip_symbol_id(self, symbol: str) -> int | None:
+    def get_scip_symbol_id(self, symbol: str, repo_id: int = 1) -> int | None:
         """Look up a SCIP symbol id by its string identifier."""
         cur = self._conn.execute(
-            "SELECT id FROM scip_symbols WHERE symbol = ?", (symbol,)
+            "SELECT id FROM scip_symbols WHERE symbol = ? AND repo_id = ?", (symbol, repo_id)
         )
         row = cur.fetchone()
         return row[0] if row else None
 
-    def get_definition(self, symbol_name: str) -> list[dict]:
+    def get_definition(self, symbol_name: str, repo_id: int = 1) -> list[dict]:
         """Find definition locations for a symbol by name substring match."""
         cur = self._conn.execute(
             """SELECT ss.symbol, so.file_path, so.start_line, so.start_col,
                       so.end_line, so.end_col
                FROM scip_occurrences so
                JOIN scip_symbols ss ON so.symbol_id = ss.id
-               WHERE so.role = 'definition' AND ss.symbol LIKE '%' || ? || '%'""",
-            (symbol_name,),
+               WHERE so.role = 'definition' AND ss.symbol LIKE '%' || ? || '%'
+                     AND so.repo_id = ?""",
+            (symbol_name, repo_id),
         )
         return [dict(row) for row in cur.fetchall()]
 
-    def get_references(self, symbol_name: str) -> list[dict]:
+    def get_references(self, symbol_name: str, repo_id: int = 1) -> list[dict]:
         """Find all reference locations for a symbol by name substring match."""
         cur = self._conn.execute(
             """SELECT ss.symbol, so.file_path, so.start_line, so.start_col,
                       so.end_line, so.end_col, so.role
                FROM scip_occurrences so
                JOIN scip_symbols ss ON so.symbol_id = ss.id
-               WHERE so.role = 'reference' AND ss.symbol LIKE '%' || ? || '%'""",
-            (symbol_name,),
+               WHERE so.role = 'reference' AND ss.symbol LIKE '%' || ? || '%'
+                     AND so.repo_id = ?""",
+            (symbol_name, repo_id),
         )
         return [dict(row) for row in cur.fetchall()]
 
-    def get_scip_occurrences_by_symbol_id(self, symbol_id: int) -> list[dict]:
+    def get_scip_occurrences_by_symbol_id(
+        self, symbol_id: int, repo_id: int = 1
+    ) -> list[dict]:
         """Get all occurrences for a specific SCIP symbol id."""
         cur = self._conn.execute(
             """SELECT file_path, start_line, start_col, end_line, end_col, role
-               FROM scip_occurrences WHERE symbol_id = ?""",
-            (symbol_id,),
+               FROM scip_occurrences WHERE symbol_id = ? AND repo_id = ?""",
+            (symbol_id, repo_id),
         )
         return [dict(row) for row in cur.fetchall()]
 
-    def get_scip_relationships_for(self, symbol_id: int) -> list[dict]:
+    def get_scip_relationships_for(self, symbol_id: int, repo_id: int = 1) -> list[dict]:
         """Get relationships where this symbol is the subject."""
         cur = self._conn.execute(
             """SELECT sr.relationship, ss.symbol AS related_symbol
                FROM scip_relationships sr
                JOIN scip_symbols ss ON sr.related_symbol_id = ss.id
-               WHERE sr.symbol_id = ?""",
-            (symbol_id,),
+               WHERE sr.symbol_id = ? AND sr.repo_id = ?""",
+            (symbol_id, repo_id),
         )
         return [dict(row) for row in cur.fetchall()]
 
     # ── File summary operations ──
 
     def insert_file_summary(
-        self, file_path: str, summary: str, language: str | None, line_count: int | None
+        self, file_path: str, summary: str, language: str | None, line_count: int | None,
+        repo_id: int = 1,
     ) -> None:
         """Insert or replace a file summary."""
         self._conn.execute(
-            """INSERT OR REPLACE INTO file_summaries (file_path, summary, language, line_count)
-               VALUES (?, ?, ?, ?)""",
-            (file_path, summary, language, line_count),
+            """INSERT OR REPLACE INTO file_summaries (file_path, summary, language, line_count, repo_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            (file_path, summary, language, line_count, repo_id),
         )
         self._conn.commit()
 
     def insert_file_summaries(
-        self, summaries: list[tuple[str, str, str | None, int | None]]
+        self, summaries: list[tuple[str, str, str | None, int | None]],
+        repo_id: int = 1,
     ) -> None:
         """Batch insert file summaries. Each tuple: (file_path, summary, language, line_count)."""
         self._conn.executemany(
-            """INSERT OR REPLACE INTO file_summaries (file_path, summary, language, line_count)
-               VALUES (?, ?, ?, ?)""",
-            summaries,
+            """INSERT OR REPLACE INTO file_summaries (file_path, summary, language, line_count, repo_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            [(*s, repo_id) for s in summaries],
         )
         self._conn.commit()
 
-    def get_file_summaries(self, directory: str | None = None) -> list[dict]:
+    def get_file_summaries(
+        self, directory: str | None = None, repo_id: int = 1
+    ) -> list[dict]:
         """Get file summaries, optionally scoped to a subdirectory."""
         if directory:
             # Ensure directory ends with / for prefix matching
             prefix = directory.rstrip("/") + "/"
             cur = self._conn.execute(
-                "SELECT * FROM file_summaries WHERE file_path LIKE ? ORDER BY file_path",
-                (prefix + "%",),
+                "SELECT * FROM file_summaries WHERE file_path LIKE ? AND repo_id = ? ORDER BY file_path",
+                (prefix + "%", repo_id),
             )
         else:
             cur = self._conn.execute(
-                "SELECT * FROM file_summaries ORDER BY file_path"
+                "SELECT * FROM file_summaries WHERE repo_id = ? ORDER BY file_path",
+                (repo_id,),
             )
         return [dict(row) for row in cur.fetchall()]
 
-    def get_directory_tree(self) -> dict:
+    def get_directory_tree(self, repo_id: int = 1) -> dict:
         """Return nested dict of {dir: {file: summary, subdir: {...}}}."""
-        summaries = self.get_file_summaries()
+        summaries = self.get_file_summaries(repo_id=repo_id)
         tree: dict = {}
         for row in summaries:
             parts = row["file_path"].split("/")
@@ -507,92 +522,105 @@ class SqliteStore:
 
     # ── Directory summary operations ──
 
-    def insert_directory_summary(self, dir_path: str, summary: str) -> None:
+    def insert_directory_summary(self, dir_path: str, summary: str, repo_id: int = 1) -> None:
         """Insert or replace a directory summary."""
         self._conn.execute(
-            "INSERT OR REPLACE INTO directory_summaries (dir_path, summary) VALUES (?, ?)",
-            (dir_path, summary),
+            "INSERT OR REPLACE INTO directory_summaries (dir_path, summary, repo_id) VALUES (?, ?, ?)",
+            (dir_path, summary, repo_id),
         )
         self._conn.commit()
 
-    def insert_directory_summaries(self, summaries: list[tuple[str, str]]) -> None:
+    def insert_directory_summaries(
+        self, summaries: list[tuple[str, str]], repo_id: int = 1
+    ) -> None:
         """Batch insert directory summaries. Each tuple: (dir_path, summary)."""
         self._conn.executemany(
-            "INSERT OR REPLACE INTO directory_summaries (dir_path, summary) VALUES (?, ?)",
-            summaries,
+            "INSERT OR REPLACE INTO directory_summaries (dir_path, summary, repo_id) VALUES (?, ?, ?)",
+            [(*s, repo_id) for s in summaries],
         )
         self._conn.commit()
 
-    def get_directory_summary(self, dir_path: str) -> dict | None:
+    def get_directory_summary(self, dir_path: str, repo_id: int = 1) -> dict | None:
         """Get a single directory summary by path."""
         cur = self._conn.execute(
-            "SELECT * FROM directory_summaries WHERE dir_path = ?", (dir_path,)
+            "SELECT * FROM directory_summaries WHERE dir_path = ? AND repo_id = ?",
+            (dir_path, repo_id),
         )
         row = cur.fetchone()
         return dict(row) if row else None
 
-    def get_directory_summaries(self, paths: list[str]) -> dict[str, str]:
+    def get_directory_summaries(self, paths: list[str], repo_id: int = 1) -> dict[str, str]:
         """Batch lookup directory summaries. Returns {dir_path: summary}."""
         if not paths:
             return {}
         placeholders = ",".join("?" for _ in paths)
         cur = self._conn.execute(
-            f"SELECT dir_path, summary FROM directory_summaries WHERE dir_path IN ({placeholders})",  # noqa: S608
-            paths,
+            f"SELECT dir_path, summary FROM directory_summaries WHERE dir_path IN ({placeholders}) AND repo_id = ?",  # noqa: S608
+            [*paths, repo_id],
         )
         return {row["dir_path"]: row["summary"] for row in cur.fetchall()}
 
-    def get_all_directory_paths_from_summaries(self) -> set[str]:
+    def get_all_directory_paths_from_summaries(self, repo_id: int = 1) -> set[str]:
         """Return all directory paths that have summaries."""
-        cur = self._conn.execute("SELECT dir_path FROM directory_summaries")
+        cur = self._conn.execute(
+            "SELECT dir_path FROM directory_summaries WHERE repo_id = ?", (repo_id,)
+        )
         return {row[0] for row in cur.fetchall()}
 
     # ── File contents operations ──
 
-    def insert_file_content(self, file_path: str, content: str) -> None:
+    def insert_file_content(self, file_path: str, content: str, repo_id: int = 1) -> None:
         """Insert or replace a file's full content."""
         line_count = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
         self._conn.execute(
-            "INSERT OR REPLACE INTO file_contents (file_path, content, line_count) VALUES (?, ?, ?)",
-            (file_path, content, line_count),
+            "INSERT OR REPLACE INTO file_contents (file_path, content, line_count, repo_id) VALUES (?, ?, ?, ?)",
+            (file_path, content, line_count, repo_id),
         )
         self._conn.commit()
 
-    def get_file_content(self, file_path: str) -> str | None:
+    def get_file_content(self, file_path: str, repo_id: int = 1) -> str | None:
         """Get a file's content by path, or None if not stored."""
         cur = self._conn.execute(
-            "SELECT content FROM file_contents WHERE file_path = ?", (file_path,)
+            "SELECT content FROM file_contents WHERE file_path = ? AND repo_id = ?",
+            (file_path, repo_id),
         )
         row = cur.fetchone()
         return row[0] if row else None
 
     # ── Dashboard query methods ──
 
-    def get_chunk_by_id(self, chunk_id: int) -> dict | None:
+    def get_chunk_by_id(self, chunk_id: int, repo_id: int = 1) -> dict | None:
         """Look up a single chunk by primary key."""
-        cur = self._conn.execute("SELECT * FROM chunks WHERE id = ?", (chunk_id,))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-    def get_all_file_paths_from_chunks(self) -> set[str]:
-        """Return distinct file paths that have chunks."""
-        cur = self._conn.execute("SELECT DISTINCT file_path FROM chunks")
-        return {row[0] for row in cur.fetchall()}
-
-    def get_all_file_paths_from_summaries(self) -> set[str]:
-        """Return distinct file paths that have summaries."""
-        cur = self._conn.execute("SELECT DISTINCT file_path FROM file_summaries")
-        return {row[0] for row in cur.fetchall()}
-
-    def get_file_summary(self, file_path: str) -> dict | None:
-        """Look up a single file summary by exact path."""
         cur = self._conn.execute(
-            "SELECT * FROM file_summaries WHERE file_path = ?", (file_path,)
+            "SELECT * FROM chunks WHERE id = ? AND repo_id = ?", (chunk_id, repo_id)
         )
         row = cur.fetchone()
         return dict(row) if row else None
 
-    def clear_index_data_for_prefix(self, prefix: str) -> dict[str, int]:
+    def get_all_file_paths_from_chunks(self, repo_id: int = 1) -> set[str]:
+        """Return distinct file paths that have chunks."""
+        cur = self._conn.execute(
+            "SELECT DISTINCT file_path FROM chunks WHERE repo_id = ?", (repo_id,)
+        )
+        return {row[0] for row in cur.fetchall()}
+
+    def get_all_file_paths_from_summaries(self, repo_id: int = 1) -> set[str]:
+        """Return distinct file paths that have summaries."""
+        cur = self._conn.execute(
+            "SELECT DISTINCT file_path FROM file_summaries WHERE repo_id = ?", (repo_id,)
+        )
+        return {row[0] for row in cur.fetchall()}
+
+    def get_file_summary(self, file_path: str, repo_id: int = 1) -> dict | None:
+        """Look up a single file summary by exact path."""
+        cur = self._conn.execute(
+            "SELECT * FROM file_summaries WHERE file_path = ? AND repo_id = ?",
+            (file_path, repo_id),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def clear_index_data_for_prefix(self, prefix: str, repo_id: int = 1) -> dict[str, int]:
         """Delete chunks and symbols for files matching a path prefix.
 
         Does NOT touch SCIP data or file_summaries.
@@ -600,10 +628,10 @@ class SqliteStore:
         """
         pattern = prefix + "%"
         cur_chunks = self._conn.execute(
-            "DELETE FROM chunks WHERE file_path LIKE ?", (pattern,)
+            "DELETE FROM chunks WHERE file_path LIKE ? AND repo_id = ?", (pattern, repo_id)
         )
         cur_symbols = self._conn.execute(
-            "DELETE FROM symbols WHERE file_path LIKE ?", (pattern,)
+            "DELETE FROM symbols WHERE file_path LIKE ? AND repo_id = ?", (pattern, repo_id)
         )
         self._conn.commit()
         return {
@@ -629,12 +657,12 @@ class SqliteStore:
 
     # ── Query history ──
 
-    def insert_query(self, prompt: str) -> int:
+    def insert_query(self, prompt: str, repo_id: int = 1) -> int:
         """Insert a new query with status='running'. Returns its id."""
         now = datetime.now(timezone.utc).isoformat()
         cur = self._conn.execute(
-            "INSERT INTO queries (prompt, status, created_at) VALUES (?, 'running', ?)",
-            (prompt, now),
+            "INSERT INTO queries (prompt, status, created_at, repo_id) VALUES (?, 'running', ?, ?)",
+            (prompt, now, repo_id),
         )
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
@@ -662,44 +690,48 @@ class SqliteStore:
         )
         self._conn.commit()
 
-    def list_queries(self, limit: int = 50) -> list[dict]:
+    def list_queries(self, limit: int = 50, repo_id: int = 1) -> list[dict]:
         """List recent queries (without answer/evidence for efficiency)."""
         cur = self._conn.execute(
             """SELECT id, prompt, status, created_at, duration_secs
-               FROM queries ORDER BY created_at DESC LIMIT ?""",
-            (limit,),
+               FROM queries WHERE repo_id = ? ORDER BY created_at DESC LIMIT ?""",
+            (repo_id, limit),
         )
         return [dict(row) for row in cur.fetchall()]
 
-    def get_completed_queries_since(self, after: str | None = None) -> list[dict]:
+    def get_completed_queries_since(
+        self, after: str | None = None, repo_id: int = 1
+    ) -> list[dict]:
         """Return completed queries, optionally only those completed after a timestamp."""
         if after:
             cur = self._conn.execute(
                 """SELECT id, prompt, answer, evidence, duration_secs
                    FROM queries WHERE status = 'completed' AND completed_at > ?
+                   AND repo_id = ?
                    ORDER BY completed_at DESC""",
-                (after,),
+                (after, repo_id),
             )
         else:
             cur = self._conn.execute(
                 """SELECT id, prompt, answer, evidence, duration_secs
-                   FROM queries WHERE status = 'completed'
+                   FROM queries WHERE status = 'completed' AND repo_id = ?
                    ORDER BY completed_at DESC""",
+                (repo_id,),
             )
         return [dict(row) for row in cur.fetchall()]
 
     def insert_cached_query(
         self, prompt: str, answer: str, evidence_json: str,
-        source_query_id: int, duration_secs: float,
+        source_query_id: int, duration_secs: float, repo_id: int = 1,
     ) -> int:
         """Insert a cached query entry pointing to its source."""
         now = datetime.now(timezone.utc).isoformat()
         cur = self._conn.execute(
             """INSERT INTO queries
                (prompt, answer, evidence, status, created_at, completed_at,
-                duration_secs, source_query_id)
-               VALUES (?, ?, ?, 'cached', ?, ?, ?, ?)""",
-            (prompt, answer, evidence_json, now, now, duration_secs, source_query_id),
+                duration_secs, source_query_id, repo_id)
+               VALUES (?, ?, ?, 'cached', ?, ?, ?, ?, ?)""",
+            (prompt, answer, evidence_json, now, now, duration_secs, source_query_id, repo_id),
         )
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
@@ -721,8 +753,14 @@ class SqliteStore:
 
     # ── Counts ──
 
-    def count(self, table: str) -> int:
-        cur = self._conn.execute(f"SELECT count(*) FROM {table}")  # noqa: S608
+    def count(self, table: str, repo_id: int = 1) -> int:
+        # metadata and repos tables don't have repo_id
+        if table in ("metadata", "repos"):
+            cur = self._conn.execute(f"SELECT count(*) FROM {table}")  # noqa: S608
+        else:
+            cur = self._conn.execute(
+                f"SELECT count(*) FROM {table} WHERE repo_id = ?", (repo_id,)  # noqa: S608
+            )
         return cur.fetchone()[0]
 
     def close(self) -> None:
