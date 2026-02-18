@@ -283,7 +283,7 @@ class TestSqliteCompletedQueries:
 
 
 class TestDashboardCacheIntegration:
-    """Integration tests for the /dashboard/api/run/query cache logic.
+    """Integration tests for the /api/run/query cache logic.
 
     Uses real SQLite but mocks the agent loop to avoid Gemini API calls.
     """
@@ -331,7 +331,7 @@ class TestDashboardCacheIntegration:
         """No completed queries → cache miss → background task submitted."""
         with patch("indiseek.agent.loop.create_agent_loop"):
             client = self._client()
-            resp = client.post("/dashboard/api/run/query", json={"prompt": "What is X?"})
+            resp = client.post("/api/run/query", json={"prompt": "What is X?"})
         assert resp.status_code == 200
         data = resp.json()
         assert "task_id" in data
@@ -343,7 +343,7 @@ class TestDashboardCacheIntegration:
         """Identical prompt → cache hit with correct source_query_id."""
         src_id = self._insert_completed("How does HMR work?", "HMR answer")
         client = self._client()
-        resp = client.post("/dashboard/api/run/query", json={"prompt": "How does HMR work?"})
+        resp = client.post("/api/run/query", json={"prompt": "How does HMR work?"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["cached"] is True
@@ -354,7 +354,7 @@ class TestDashboardCacheIntegration:
         """Same tokens, different case → cache hit."""
         src_id = self._insert_completed("How does HMR work in Vite")
         client = self._client()
-        resp = client.post("/dashboard/api/run/query", json={"prompt": "how does hmr work in vite"})
+        resp = client.post("/api/run/query", json={"prompt": "how does hmr work in vite"})
         data = resp.json()
         assert data["cached"] is True
         assert data["source_query_id"] == src_id
@@ -364,7 +364,7 @@ class TestDashboardCacheIntegration:
         self._insert_completed("How does HMR work?")
         with patch("indiseek.agent.loop.create_agent_loop"):
             client = self._client()
-            resp = client.post("/dashboard/api/run/query",
+            resp = client.post("/api/run/query",
                                json={"prompt": "What is the plugin API architecture?"})
         data = resp.json()
         assert data.get("cached") is not True
@@ -377,7 +377,7 @@ class TestDashboardCacheIntegration:
         self._insert_completed("How does HMR work?")
         with patch("indiseek.agent.loop.create_agent_loop"):
             client = self._client()
-            resp = client.post("/dashboard/api/run/query",
+            resp = client.post("/api/run/query",
                                json={"prompt": "How does HMR work?", "force": True})
         data = resp.json()
         assert data.get("cached") is not True
@@ -391,7 +391,7 @@ class TestDashboardCacheIntegration:
         self.store.fail_query(qid, "agent crashed")
         with patch("indiseek.agent.loop.create_agent_loop"):
             client = self._client()
-            resp = client.post("/dashboard/api/run/query",
+            resp = client.post("/api/run/query",
                                json={"prompt": "How does HMR work?"})
         data = resp.json()
         assert data.get("cached") is not True
@@ -408,7 +408,7 @@ class TestDashboardCacheIntegration:
 
         with patch("indiseek.agent.loop.create_agent_loop"):
             client = self._client()
-            resp = client.post("/dashboard/api/run/query",
+            resp = client.post("/api/run/query",
                                json={"prompt": "How does HMR work?"})
         data = resp.json()
         assert data.get("cached") is not True
@@ -422,7 +422,7 @@ class TestDashboardCacheIntegration:
         self._insert_completed("completely unrelated stuff here")
 
         client = self._client()
-        resp = client.post("/dashboard/api/run/query",
+        resp = client.post("/api/run/query",
                            json={"prompt": "alpha beta gamma delta epsilon"})
         data = resp.json()
         # 4/5 = 0.8 — at threshold, should hit
@@ -435,7 +435,7 @@ class TestDashboardCacheIntegration:
         """Cache hit response has all expected keys with correct types."""
         self._insert_completed()
         client = self._client()
-        resp = client.post("/dashboard/api/run/query", json={"prompt": "How does HMR work?"})
+        resp = client.post("/api/run/query", json={"prompt": "How does HMR work?"})
         data = resp.json()
         assert data["cached"] is True
         assert isinstance(data["query_id"], int)
@@ -451,7 +451,7 @@ class TestDashboardCacheIntegration:
         from indiseek.api.dashboard import _task_manager
         with patch.object(_task_manager, "has_running_task", return_value=True):
             client = self._client()
-            resp = client.post("/dashboard/api/run/query",
+            resp = client.post("/api/run/query",
                                json={"prompt": "How does HMR work?"})
         assert resp.status_code == 200
         data = resp.json()
@@ -463,7 +463,7 @@ class TestDashboardCacheIntegration:
         """Completed query with empty answer string can serve as cache source."""
         self._insert_completed("How does HMR work?", answer="")
         client = self._client()
-        resp = client.post("/dashboard/api/run/query", json={"prompt": "How does HMR work?"})
+        resp = client.post("/api/run/query", json={"prompt": "How does HMR work?"})
         data = resp.json()
         assert data["cached"] is True
         assert data["answer"] == ""
@@ -472,7 +472,7 @@ class TestDashboardCacheIntegration:
         """Malformed evidence JSON in source query → cache hit returns evidence: []."""
         self._insert_completed("How does HMR work?", evidence="not json")
         client = self._client()
-        resp = client.post("/dashboard/api/run/query", json={"prompt": "How does HMR work?"})
+        resp = client.post("/api/run/query", json={"prompt": "How does HMR work?"})
         data = resp.json()
         assert data["cached"] is True
         assert data["evidence"] == []
@@ -481,7 +481,7 @@ class TestDashboardCacheIntegration:
         """Each cache hit creates a new query row with status='cached'."""
         src_id = self._insert_completed("How does HMR work?")
         client = self._client()
-        resp = client.post("/dashboard/api/run/query", json={"prompt": "How does HMR work?"})
+        resp = client.post("/api/run/query", json={"prompt": "How does HMR work?"})
         data = resp.json()
         cached_id = data["query_id"]
         assert cached_id != src_id

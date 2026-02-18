@@ -244,6 +244,7 @@ Detailed plan: `docs/plans/roadmap.md`
 - **Usage analytics:** Queries/day, latency, cache hit rate, freshness, tool usage. All from SQLite.
 
 ### Tier 3 — Nice-to-Have
+- **Multi-agent query pipeline:** Split single agent into Planner → Researcher(s) → Synthesizer → Verifier. Each researcher gets isolated context scoped to one sub-question/subsystem, preventing gravity well problem. Plan: `docs/plans/multi-agent-architecture.md`.
 - Diagrams, walkthrough pages, rich browsing UI
 - Reranking, personalization, saved searches
 - More languages/indexers (Python, Go, Java, Rust)

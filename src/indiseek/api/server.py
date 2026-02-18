@@ -1,18 +1,15 @@
-"""FastAPI server with POST /query endpoint and dashboard."""
+"""FastAPI server — app setup, CORS, router mount, SPA static files."""
 
 from __future__ import annotations
 
 import logging
-import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 from indiseek import config
-from indiseek.agent.loop import AgentResult, create_agent_loop
 from indiseek.api.dashboard import router as dashboard_router
 
 # Configure logging on import — before anything else logs
@@ -21,8 +18,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-5s [%(name)s] %(message)s",
     datefmt="%H:%M:%S",
 )
-
-logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Indiseek", description="Codebase research service")
 
@@ -34,70 +29,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Dashboard API
-app.include_router(dashboard_router, prefix="/dashboard/api")
-
-# Lazy-initialized agent loops, keyed by repo_id
-_agent_loops: dict[int, object] = {}
-
-
-def _get_agent_loop(repo_id: int = 1):
-    if repo_id not in _agent_loops:
-        logger.info("Initializing agent loop for repo_id=%d...", repo_id)
-        t0 = time.perf_counter()
-        _agent_loops[repo_id] = create_agent_loop(repo_id=repo_id)
-        logger.info("Agent loop ready (%.2fs)", time.perf_counter() - t0)
-    return _agent_loops[repo_id]
-
-
-class QueryRequest(BaseModel):
-    prompt: str
-    repo_id: int = 1
-
-
-class EvidenceStepResponse(BaseModel):
-    step: str
-    detail: str
-
-
-class QueryResponse(BaseModel):
-    answer: str
-    evidence: list[EvidenceStepResponse]
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
-@app.post("/query", response_model=QueryResponse)
-def query(req: QueryRequest):
-    logger.info("POST /query prompt=%r", req.prompt[:120])
-    t0 = time.perf_counter()
-    try:
-        agent = _get_agent_loop(repo_id=req.repo_id)
-        result: AgentResult = agent.run(req.prompt)
-        elapsed = time.perf_counter() - t0
-        logger.info(
-            "Query complete: %d evidence steps, %d char answer, %.2fs total",
-            len(result.evidence),
-            len(result.answer),
-            elapsed,
-        )
-        return QueryResponse(
-            answer=result.answer,
-            evidence=[
-                EvidenceStepResponse(
-                    step=f"{e.tool}({', '.join(f'{k}={v!r}' for k, v in e.args.items())})",
-                    detail=e.summary,
-                )
-                for e in result.evidence
-            ],
-        )
-    except Exception as e:
-        logger.exception("Agent error after %.2fs", time.perf_counter() - t0)
-        raise HTTPException(status_code=500, detail=str(e))
-
+# All API routes under /api
+app.include_router(dashboard_router, prefix="/api")
 
 # ── Dashboard SPA static files ──
 # Must be mounted after all API routes. Serves the built React app.

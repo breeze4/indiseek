@@ -1,4 +1,4 @@
-"""Dashboard API router — stats, tree, files, chunks, search, operations, SSE."""
+"""API router — health, query, stats, tree, files, chunks, search, operations, SSE."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import logging
 import queue
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,87 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _task_manager = TaskManager()
+
+# Lazy-initialized agent loops, keyed by repo_id
+_agent_loops: dict[int, object] = {}
+
+
+def _get_agent_loop(repo_id: int = 1):
+    if repo_id not in _agent_loops:
+        from indiseek.agent.loop import create_agent_loop
+        logger.info("Initializing agent loop for repo_id=%d...", repo_id)
+        t0 = time.perf_counter()
+        _agent_loops[repo_id] = create_agent_loop(repo_id=repo_id)
+        logger.info("Agent loop ready (%.2fs)", time.perf_counter() - t0)
+    return _agent_loops[repo_id]
+
+
+# ── Health ──
+
+
+@router.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+# ── Synchronous query (for curl / direct API usage) ──
+
+
+class SyncQueryRequest(BaseModel):
+    prompt: str
+    repo_id: int = 1
+
+
+class EvidenceStepResponse(BaseModel):
+    step: str
+    detail: str
+
+
+class SyncQueryResponse(BaseModel):
+    answer: str
+    evidence: list[EvidenceStepResponse]
+
+
+@router.post("/query", response_model=SyncQueryResponse)
+def sync_query(req: SyncQueryRequest):
+    """Synchronous query — blocks until the agent finishes. Saves to query history."""
+    logger.info("POST /query prompt=%r", req.prompt[:120])
+
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=503, detail="SQLite store not available")
+
+    query_id = store.insert_query(req.prompt, repo_id=req.repo_id)
+    t0 = time.perf_counter()
+    try:
+        agent = _get_agent_loop(repo_id=req.repo_id)
+        result = agent.run(req.prompt)
+        elapsed = time.perf_counter() - t0
+        logger.info(
+            "Query complete: %d evidence steps, %d char answer, %.2fs total",
+            len(result.evidence), len(result.answer), elapsed,
+        )
+        evidence = [
+            {"tool": e.tool, "args": e.args, "summary": e.summary}
+            for e in result.evidence
+        ]
+        store.complete_query(query_id, result.answer, json.dumps(evidence), elapsed)
+        return SyncQueryResponse(
+            answer=result.answer,
+            evidence=[
+                EvidenceStepResponse(
+                    step=f"{e.tool}({', '.join(f'{k}={v!r}' for k, v in e.args.items())})",
+                    detail=e.summary,
+                )
+                for e in result.evidence
+            ],
+        )
+    except Exception as e:
+        elapsed = time.perf_counter() - t0
+        store.fail_query(query_id, str(e))
+        logger.exception("Agent error after %.2fs", elapsed)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ── Lazy-initialized stores ──
 

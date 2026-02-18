@@ -6,7 +6,7 @@ A read-only web UI mounted on the existing FastAPI server that lets you inspect 
 
 ## Architecture
 
-- **Backend:** New API routes mounted on the existing FastAPI app under `/dashboard/api/...`
+- **Backend:** New API routes mounted on the existing FastAPI app under `/api/...`
 - **Frontend:** React SPA using Vite as build tool, shadcn/ui component library. Lives in `frontend/` directory with its own `package.json`. Client-side routing via React Router.
 - **Serving:** FastAPI serves the built SPA static files at `/dashboard`. During development, the React dev server proxies API calls to FastAPI.
 - **Read-only:** No write operations. All indexing remains CLI-only via `scripts/index.py`.
@@ -67,13 +67,13 @@ Standalone search page:
 
 ## Dashboard API Endpoints
 
-All under `/dashboard/api/`:
+All under `/api/`:
 
-- `GET /dashboard/api/stats` — Aggregate counts for all stores
-- `GET /dashboard/api/tree?path=` — Directory tree with coverage counts for given path (default root). Returns children one level deep with aggregated stats.
-- `GET /dashboard/api/files/:path` — File detail: summary, chunks, per-chunk pipeline status
-- `GET /dashboard/api/chunks/:id` — Single chunk detail with pipeline presence
-- `GET /dashboard/api/search?q=&mode=&limit=` — Execute search, return ranked results with scores
+- `GET /api/stats` — Aggregate counts for all stores
+- `GET /api/tree?path=` — Directory tree with coverage counts for given path (default root). Returns children one level deep with aggregated stats.
+- `GET /api/files/:path` — File detail: summary, chunks, per-chunk pipeline status
+- `GET /api/chunks/:id` — Single chunk detail with pipeline presence
+- `GET /api/search?q=&mode=&limit=` — Execute search, return ranked results with scores
 
 ## Frontend Stack
 
@@ -85,7 +85,7 @@ All under `/dashboard/api/`:
 
 ## Development Workflow
 
-- `cd frontend && npm run dev` — Runs Vite dev server with HMR, proxies `/dashboard/api` to FastAPI
+- `cd frontend && npm run dev` — Runs Vite dev server with HMR, proxies `/api` to FastAPI
 - `cd frontend && npm run build` — Produces `frontend/dist/`
 - FastAPI serves `frontend/dist/` at `/dashboard` in production
 - `.gitignore` includes `frontend/node_modules/` and `frontend/dist/`
@@ -99,8 +99,8 @@ Natural language query interface for the agent loop. Users submit a question, se
 - **Answer:** Rendered in a styled div with `whitespace-pre-wrap` when the agent finishes.
 - **Evidence trail:** Collapsible section showing each tool call with its summary.
 - **States:** idle (input only), running (input disabled, progress visible, pulsing dot), complete (answer + evidence, input re-enabled).
-- **History:** Left sidebar showing past queries with status badges (running/completed/failed), relative timestamps, and duration. Clicking a past query loads its answer and evidence into the main view. Queries persist in SQLite across server restarts. `GET /dashboard/api/queries` returns the list (most recent first, limit 50), `GET /dashboard/api/queries/{id}` returns full detail including answer and evidence.
-- **Backend:** `POST /dashboard/api/run/query` submits the prompt to `AgentLoop.run()` via TaskManager. Returns 409 if a task is already running, 400 if GEMINI_API_KEY is not set. Query results are persisted in the `queries` SQLite table with prompt, answer, evidence (JSON), status, timestamps, and duration.
+- **History:** Left sidebar showing past queries with status badges (running/completed/failed), relative timestamps, and duration. Clicking a past query loads its answer and evidence into the main view. Queries persist in SQLite across server restarts. `GET /api/queries` returns the list (most recent first, limit 50), `GET /api/queries/{id}` returns full detail including answer and evidence.
+- **Backend:** `POST /api/run/query` submits the prompt to `AgentLoop.run()` via TaskManager. Returns 409 if a task is already running, 400 if GEMINI_API_KEY is not set. Query results are persisted in the `queries` SQLite table with prompt, answer, evidence (JSON), status, timestamps, and duration.
 - **Caching:** Before starting the agent loop, the endpoint checks for fuzzy-matching completed queries using Jaccard similarity (threshold 0.8). On cache hit, a new `queries` row is inserted with `status='cached'` and `source_query_id` pointing to the original, and the response is returned instantly (no TaskManager, no 409 conflict). Cache is invalidated when any indexing operation completes (tracked via `last_index_at` in the `metadata` table). The `force` parameter on the request body bypasses the cache. The frontend shows a purple "cached" badge and a "Re-run without cache" button for cached results.
 
 ## What This Is NOT

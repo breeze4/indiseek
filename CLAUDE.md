@@ -99,21 +99,21 @@ Repos can be managed via the dashboard UI at `/repos` or via the API:
 
 ```bash
 # List repos
-curl http://localhost:8000/dashboard/api/repos
+curl http://localhost:8000/api/repos
 
 # Add a repo (clones in background)
-curl -X POST http://localhost:8000/dashboard/api/repos \
+curl -X POST http://localhost:8000/api/repos \
     -H "Content-Type: application/json" \
     -d '{"name": "myrepo", "url": "https://github.com/org/myrepo.git"}'
 
 # Check freshness (compares indexed SHA to remote HEAD)
-curl -X POST http://localhost:8000/dashboard/api/repos/2/check
+curl -X POST http://localhost:8000/api/repos/2/check
 
 # Sync repo (git pull + incremental re-index of changed files)
-curl -X POST http://localhost:8000/dashboard/api/repos/2/sync
+curl -X POST http://localhost:8000/api/repos/2/sync
 ```
 
-All dashboard API endpoints accept `?repo_id=N` (GET) or `"repo_id": N` in body (POST), defaulting to 1.
+All API endpoints accept `?repo_id=N` (GET) or `"repo_id": N` in body (POST), defaulting to 1.
 
 `REPO_PATH` in `.env` is only needed for legacy single-repo usage (repo_id=1). When using the dashboard to manage repos, clones go to `DATA_DIR/repos/<id>/`.
 
@@ -125,15 +125,15 @@ uvicorn indiseek.api.server:app
 ## Query
 ```bash
 # Health check
-curl http://localhost:8000/health
+curl http://localhost:8000/api/health
 
 # Ask a question (requires GEMINI_API_KEY and completed indexing)
-curl -X POST http://localhost:8000/query \
+curl -X POST http://localhost:8000/api/query \
     -H "Content-Type: application/json" \
     -d '{"prompt": "How does Vite HMR propagation work when a CSS file changes?"}'
 
 # Query a specific repo
-curl -X POST http://localhost:8000/query \
+curl -X POST http://localhost:8000/api/query \
     -H "Content-Type: application/json" \
     -d '{"prompt": "How does auth work?", "repo_id": 2}'
 ```
@@ -175,7 +175,7 @@ format_results(results, "HMR CSS propagation")
 - src/indiseek/ — main package
 - src/indiseek/agent/ — agent loop (Gemini tool-calling) and LLM provider
 - src/indiseek/tools/ — agent tools (read_map, search_code, resolve_symbol, read_file)
-- src/indiseek/api/ — FastAPI server (POST /query, GET /health, dashboard API, repo management)
+- src/indiseek/api/ — FastAPI server (all routes under /api/*, dashboard SPA at /dashboard)
 - src/indiseek/indexer/pipeline.py — extracted pipeline step functions with progress callbacks
 - src/indiseek/storage/sqlite_store.py — SQLite storage layer (all data tables, repo CRUD)
 - src/indiseek/git_utils.py — git operations (clone, fetch, pull, SHA comparison)
