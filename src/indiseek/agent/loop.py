@@ -30,6 +30,20 @@ logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 20
 SYNTHESIS_PHASE = 18  # iteration index where we force text-only (0-based)
+CRITIQUE_PHASE = 15
+MIN_TOOL_CALLS_FOR_CRITIQUE = 5
+
+CRITIQUE_PROMPT = (
+    "STOP. Before writing your final answer, verify your claims.\n\n"
+    "1. List every factual claim you plan to make (e.g., 'function X is defined "
+    "in file Y', 'A calls B', 'the update is sent via WebSocket').\n"
+    "2. For each claim you haven't directly verified with a tool call, verify it NOW. "
+    "Use resolve_symbol to check definitions/callers. Use read_file to confirm "
+    "implementations.\n"
+    "3. Flag any claims you cannot verify as uncertain.\n\n"
+    "You have a few more iterations for targeted verification. Be specific — one "
+    "claim per tool call."
+)
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are a codebase research agent. Your job is to answer questions about a codebase \
@@ -475,6 +489,14 @@ class AgentLoop:
             else:
                 gen_config = research_config
                 logger.info("--- Iteration %d/%d ---", iteration + 1, MAX_ITERATIONS)
+
+            # Inject critique prompt at the critique phase if enough tool calls
+            if iteration == CRITIQUE_PHASE and tool_call_count >= MIN_TOOL_CALLS_FOR_CRITIQUE:
+                logger.info("--- Iteration %d/%d (CRITIC PHASE) ---", iteration + 1, MAX_ITERATIONS)
+                contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=CRITIQUE_PROMPT)],
+                ))
 
             t0 = time.perf_counter()
             response = self._client.models.generate_content(

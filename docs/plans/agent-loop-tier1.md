@@ -239,8 +239,8 @@ Add a new test class `TestCritiquePhase` with:
 
 ### Verification
 
-- [ ] `pytest tests/test_agent.py` passes
-- [ ] `ruff check src/` has no errors
+- [x] `pytest tests/test_agent.py` passes
+- [x] `ruff check src/` has no errors
 
 ---
 

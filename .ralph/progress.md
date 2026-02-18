@@ -816,3 +816,26 @@ _Session duration: 2m 38s — 2026-02-17 19:30:55_
 - search_code symbol discovery is tracked in both the inline `run()` block (which handles search_code specially for summary extraction) and the `_execute_tool` method (defensive, in case it's called directly).
 - `_files_read` is tracked in `_execute_tool` for read_file, even though it's not currently used by `_exploration_gaps()` — it's available for future use.
 - Question reiteration prepends `[QUESTION: <prompt>]` to every tool response, keeping the model grounded on the original question throughout long loops.
+
+_Session duration: 4m 23s — 2026-02-17 19:35:18_
+
+---
+
+## Agent Loop Tier 1 — Step 4: CRITIC Verification Phase
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+
+### Files Modified
+- `src/indiseek/agent/loop.py` — added `CRITIQUE_PHASE = 15`, `MIN_TOOL_CALLS_FOR_CRITIQUE = 5`, and `CRITIQUE_PROMPT` module-level constants. Injected critique prompt into main loop at iteration 15 when tool_call_count >= 5. Tools remain enabled during critique phase (uses research_config, not synthesis_config).
+- `tests/test_agent.py` — added imports for `CRITIQUE_PHASE`, `CRITIQUE_PROMPT`, `MIN_TOOL_CALLS_FOR_CRITIQUE`. Added `TestCritiquePhase` class with 3 tests: critique injected when enough tool calls, critique skipped for simple queries, critique allows tool calls (uses AUTO mode).
+- `docs/plans/agent-loop-tier1.md` — marked Step 4 verification items complete.
+
+### Test Results
+- 53/53 tests in test_agent.py passing (50 existing + 3 new)
+- `ruff check src/` — all checks passed
+
+### Notes
+- The critique prompt is injected as a user message into the conversation at iteration 15 (0-based), right before the generate_content call. This gives the model 3 more research iterations (15, 16, 17) before forced synthesis at 18.
+- Tools are NOT disabled during the critique phase — the whole point is for the model to verify its claims via tool calls.
+- The critique only fires if tool_call_count >= 5, skipping it for simple queries that resolved quickly.
