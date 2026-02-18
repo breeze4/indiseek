@@ -520,7 +520,7 @@ class TestAgentLoop:
 
         result = agent.run("Loop forever?")
         assert "maximum iterations" in result.answer
-        assert len(result.evidence) == 20  # MAX_ITERATIONS
+        assert len(result.evidence) == 14  # MAX_ITERATIONS
 
     def test_tool_error_captured(self, store, repo_dir):
         """Tool exceptions are caught and recorded as evidence."""
@@ -598,7 +598,7 @@ class TestAgentLoop:
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         prompt = agent._build_system_prompt()
         assert "Main entry point" in prompt
-        assert "20 iterations" in prompt
+        assert "14 iterations" in prompt
 
 
 # ── FastAPI server tests ──
@@ -611,14 +611,23 @@ class TestServer:
         from indiseek.api.server import app
 
         client = TestClient(app)
-        resp = client.get("/health")
+        resp = client.get("/api/health")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
 
-    def test_query_endpoint(self):
+    def test_query_endpoint(self, tmp_path):
         from fastapi.testclient import TestClient
 
-        from indiseek.api.server import app, _get_agent_loop
+        from indiseek.api.server import app
+        from indiseek.storage.sqlite_store import SqliteStore
+
+        db_path = tmp_path / "test.db"
+        SqliteStore(db_path).init_db()
+
+        def make_store():
+            s = SqliteStore(db_path)
+            s.init_db()
+            return s
 
         mock_loop = MagicMock()
         mock_loop.run.return_value = AgentResult(
@@ -628,9 +637,10 @@ class TestServer:
             ],
         )
 
-        with patch("indiseek.api.server._get_agent_loop", return_value=mock_loop):
+        with patch("indiseek.api.dashboard._get_agent_loop", return_value=mock_loop), \
+             patch("indiseek.api.dashboard._get_sqlite_store", side_effect=make_store):
             client = TestClient(app)
-            resp = client.post("/query", json={"prompt": "What is 42?"})
+            resp = client.post("/api/query", json={"prompt": "What is 42?"})
 
         assert resp.status_code == 200
         data = resp.json()
@@ -638,10 +648,19 @@ class TestServer:
         assert len(data["evidence"]) == 1
         assert data["evidence"][0]["step"] == "read_map()"
 
-    def test_query_endpoint_with_evidence_args(self):
+    def test_query_endpoint_with_evidence_args(self, tmp_path):
         from fastapi.testclient import TestClient
 
         from indiseek.api.server import app
+        from indiseek.storage.sqlite_store import SqliteStore
+
+        db_path = tmp_path / "test.db"
+        SqliteStore(db_path).init_db()
+
+        def make_store():
+            s = SqliteStore(db_path)
+            s.init_db()
+            return s
 
         mock_loop = MagicMock()
         mock_loop.run.return_value = AgentResult(
@@ -655,25 +674,36 @@ class TestServer:
             ],
         )
 
-        with patch("indiseek.api.server._get_agent_loop", return_value=mock_loop):
+        with patch("indiseek.api.dashboard._get_agent_loop", return_value=mock_loop), \
+             patch("indiseek.api.dashboard._get_sqlite_store", side_effect=make_store):
             client = TestClient(app)
-            resp = client.post("/query", json={"prompt": "Find hello"})
+            resp = client.post("/api/query", json={"prompt": "Find hello"})
 
         assert resp.status_code == 200
         data = resp.json()
         assert "query='hello'" in data["evidence"][0]["step"]
 
-    def test_query_endpoint_error(self):
+    def test_query_endpoint_error(self, tmp_path):
         from fastapi.testclient import TestClient
 
         from indiseek.api.server import app
+        from indiseek.storage.sqlite_store import SqliteStore
+
+        db_path = tmp_path / "test.db"
+        SqliteStore(db_path).init_db()
+
+        def make_store():
+            s = SqliteStore(db_path)
+            s.init_db()
+            return s
 
         mock_loop = MagicMock()
         mock_loop.run.side_effect = RuntimeError("boom")
 
-        with patch("indiseek.api.server._get_agent_loop", return_value=mock_loop):
+        with patch("indiseek.api.dashboard._get_agent_loop", return_value=mock_loop), \
+             patch("indiseek.api.dashboard._get_sqlite_store", side_effect=make_store):
             client = TestClient(app)
-            resp = client.post("/query", json={"prompt": "crash"})
+            resp = client.post("/api/query", json={"prompt": "crash"})
 
         assert resp.status_code == 500
 
@@ -683,7 +713,7 @@ class TestServer:
         from indiseek.api.server import app
 
         client = TestClient(app)
-        resp = client.post("/query", json={})
+        resp = client.post("/api/query", json={})
         assert resp.status_code == 422  # validation error
 
 
@@ -715,38 +745,6 @@ class TestDataclasses:
 
 
 class TestExplorationTracking:
-    def test_discovered_symbols_tracked(self, store, repo_dir):
-        """search_code results populate _discovered_symbols."""
-        mock_searcher = MagicMock()
-        mock_searcher.search.return_value = [
-            HybridResult(
-                chunk_id=1, file_path="src/main.ts", symbol_name="createServer",
-                chunk_type="function", content="function createServer() {}", score=0.9,
-                match_type="lexical",
-            ),
-            HybridResult(
-                chunk_id=2, file_path="src/main.ts", symbol_name="startServer",
-                chunk_type="function", content="function startServer() {}", score=0.8,
-                match_type="lexical",
-            ),
-            HybridResult(
-                chunk_id=3, file_path="src/main.ts", symbol_name=None,
-                chunk_type="module", content="// module chunk", score=0.5,
-                match_type="lexical",
-            ),
-        ]
-        agent = AgentLoop(store, repo_dir, mock_searcher, api_key="fake")
-
-        fn_resp = _make_fn_call_response("search_code", {"query": "server"})
-        text_resp = _make_text_response("Done.")
-        agent._client = MagicMock()
-        agent._client.models.generate_content.side_effect = [fn_resp, text_resp]
-
-        agent.run("Find server code")
-        assert "createServer" in agent._discovered_symbols
-        assert "startServer" in agent._discovered_symbols
-        assert None not in agent._discovered_symbols  # None symbol_name skipped
-
     def test_resolved_symbols_tracked(self, store, repo_dir, searcher):
         """resolve_symbol calls populate _symbols_resolved."""
         store.insert_symbols([
@@ -767,25 +765,6 @@ class TestExplorationTracking:
 
         agent.run("Find hello")
         assert ("hello", "definition") in agent._symbols_resolved
-
-    def test_gaps_surface_unresolved(self, store, repo_dir, searcher):
-        """Gaps method returns unresolved symbols."""
-        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
-        agent._discovered_symbols = {"foo", "bar", "baz"}
-        agent._symbols_resolved = {("foo", "definition")}
-
-        gaps = agent._exploration_gaps()
-        assert "bar" in gaps
-        assert "baz" in gaps
-        assert "foo" not in gaps
-
-    def test_gaps_empty_when_all_resolved(self, store, repo_dir, searcher):
-        """Gaps method returns empty string when all discovered symbols resolved."""
-        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
-        agent._discovered_symbols = {"foo", "bar"}
-        agent._symbols_resolved = {("foo", "definition"), ("bar", "callers")}
-
-        assert agent._exploration_gaps() == ""
 
     def test_question_reiteration_in_responses(self, store, repo_dir, searcher):
         """Tool responses include [QUESTION: ...] prefix."""

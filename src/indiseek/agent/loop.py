@@ -28,9 +28,9 @@ from indiseek.tools.search_code import (
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 20
-SYNTHESIS_PHASE = 18  # iteration index where we force text-only (0-based)
-CRITIQUE_PHASE = 15
+MAX_ITERATIONS = 14
+SYNTHESIS_PHASE = 12  # iteration index where we force text-only (0-based)
+CRITIQUE_PHASE = 9
 MIN_TOOL_CALLS_FOR_CRITIQUE = 5
 
 CRITIQUE_PROMPT = (
@@ -92,8 +92,8 @@ If asked "How is the dev server created?", a good first turn might be:
 
 ## Budget
 You have {max_iterations} iterations. Each iteration is one round of tool calls. \
-Plan to use at most 12-14 iterations for research, then synthesize your answer. \
-If you're past iteration 14, stop researching and write your answer with what you have.
+Plan to use at most 8-10 iterations for research, then synthesize your answer. \
+If you're past iteration 10, stop researching and write your answer with what you have.
 
 Be thorough but efficient. Don't read entire files when a targeted search suffices. \
 Don't repeat a search you've already done. Synthesize your findings into a clear, \
@@ -286,7 +286,6 @@ class AgentLoop:
         self._resolve_symbol_used: bool = False
         self._files_read: set[str] = set()
         self._symbols_resolved: set[tuple[str, str]] = set()
-        self._discovered_symbols: set[str] = set()
         self._original_prompt: str = ""
 
     def _build_system_prompt(self) -> str:
@@ -316,9 +315,6 @@ class AgentLoop:
                 results = self._searcher.search(query, mode=mode, limit=10)
                 result = format_results(results, query)
                 self._query_cache.put(query, result)
-                for r in results:
-                    if r.symbol_name:
-                        self._discovered_symbols.add(r.symbol_name)
         elif name == "resolve_symbol":
             self._resolve_symbol_used = True
             symbol_name = args["symbol_name"]
@@ -387,34 +383,13 @@ class AgentLoop:
 
     def _maybe_inject_tool_hint(self, iteration: int) -> str | None:
         """Return a hint nudging the model toward better behavior based on progress."""
-        hints = []
         if iteration >= 3 and not self._resolve_symbol_used:
-            hints.append(
-                "You haven't used resolve_symbol yet. It provides precise "
+            return (
+                "\n[HINT: You haven't used resolve_symbol yet. It provides precise "
                 "cross-reference data (definition, references, callers, callees) and "
-                "is more accurate than searching for symbol names. Try it now."
+                "is more accurate than searching for symbol names. Try it now.]"
             )
-        
-        if iteration == 14:
-            hints.append(
-                "You are at iteration 14/20. Review your collected evidence. "
-                "If you have enough to answer, synthesize now. Otherwise, focus "
-                "on the single most critical piece of information remaining."
-            )
-            
-        if not hints:
-            return None
-            
-        return "\n[HINT: " + " ".join(hints) + "]"
-
-    def _exploration_gaps(self) -> str:
-        """Surface symbols found but not yet investigated."""
-        resolved_names = {s[0] for s in self._symbols_resolved}
-        unresolved = self._discovered_symbols - resolved_names
-        if not unresolved:
-            return ""
-        names = sorted(unresolved)[:5]
-        return f"\n[Symbols found but not yet resolved: {', '.join(names)}]"
+        return None
 
     def run(
         self,
@@ -432,7 +407,6 @@ class AgentLoop:
         self._resolve_symbol_used = False
         self._files_read.clear()
         self._symbols_resolved.clear()
-        self._discovered_symbols.clear()
         self._original_prompt = prompt
 
         logger.debug("Building system prompt (includes read_map)...")
@@ -531,11 +505,14 @@ class AgentLoop:
             # Execute each function call and build response parts
             remaining = MAX_ITERATIONS - iteration - 1
             tool_call_count += len(response.function_calls)
+            # Execute all tool calls and collect results
+            num_calls = len(response.function_calls)
             fn_response_parts: list[types.Part] = []
+            tool_results: list[tuple[str, dict, str, str]] = []  # (name, args, result, summary)
             for call in response.function_calls:
                 args = dict(call.args) if call.args else {}
                 logger.info("  -> %s(%s)", call.name, ", ".join(f"{k}={v!r}" for k, v in args.items()))
-                
+
                 try:
                     # Special case for search_code to get raw results for summary
                     if call.name == "search_code":
@@ -549,10 +526,6 @@ class AgentLoop:
                             results = self._searcher.search(query, mode=mode, limit=10)
                             result = format_results(results, query)
                             self._query_cache.put(query, result)
-                            # Track discovered symbols
-                            for r in results:
-                                if r.symbol_name:
-                                    self._discovered_symbols.add(r.symbol_name)
                             summary = f"Search: {query} -> {summarize_results(results)}"
                             # Contextual suggestion: nudge toward resolve_symbol
                             if not self._resolve_symbol_used and results:
@@ -573,7 +546,7 @@ class AgentLoop:
                             if "start_line" in args:
                                 summary += f" (lines {args['start_line']}-{args.get('end_line', '')})"
                         elif call.name == "resolve_symbol":
-                            # Extract result count from first line: "Definition of 'foo' (SCIP, 2 result(s)):"
+                            # Extract result count from first line
                             first_line = result.splitlines()[0] if result else ""
                             summary = f"Symbol: {args['symbol_name']} ({args['action']}) -> {first_line}"
                         elif call.name == "read_map":
@@ -591,58 +564,50 @@ class AgentLoop:
                     logger.debug("  truncating result from %d to 15000 chars", len(result))
                     result = result[:15000] + "\n... (truncated)"
 
-                # Prepend question reiteration to keep context
-                result = f"[QUESTION: {self._original_prompt}]\n" + result
+                tool_results.append((call.name, args, result, summary))
 
-                # Inject iteration budget into the result
+            # Build function response parts with per-turn injections
+            for i, (name, args, result, summary) in enumerate(tool_results):
+                # Question reiteration: first tool response per turn only
+                if i == 0:
+                    result = f"[QUESTION: {self._original_prompt}]\n" + result
+
+                # Budget injection: only in last 4 iterations
                 if remaining <= 2:
                     result += (
                         f"\n[Iteration {iteration + 1}/{MAX_ITERATIONS}, "
                         f"{tool_call_count} tool calls used"
                         " — stop researching and synthesize your answer NOW]"
                     )
-                elif remaining <= 5:
+                elif remaining <= 4:
                     result += (
                         f"\n[Iteration {iteration + 1}/{MAX_ITERATIONS}, "
                         f"{tool_call_count} tool calls used"
                         " — start wrapping up research]"
                     )
-                else:
-                    result += (
-                        f"\n[Iteration {iteration + 1}/{MAX_ITERATIONS}, "
-                        f"{tool_call_count} tool calls used]"
-                    )
 
-                # Inject resolve_symbol hint if applicable
-                hint = self._maybe_inject_tool_hint(iteration)
-                if hint:
-                    result += hint
-
-                # Surface exploration gaps
-                gaps = self._exploration_gaps()
-                if gaps:
-                    result += gaps
+                # Tool hint: last tool response per turn only
+                if i == num_calls - 1:
+                    hint = self._maybe_inject_tool_hint(iteration)
+                    if hint:
+                        result += hint
 
                 evidence.append(
-                    EvidenceStep(
-                        tool=call.name,
-                        args=args,
-                        summary=summary,
-                    )
+                    EvidenceStep(tool=name, args=args, summary=summary)
                 )
 
                 if on_progress is not None:
                     on_progress({
                         "step": "query",
                         "iteration": iteration + 1,
-                        "tool": call.name,
+                        "tool": name,
                         "args": args,
                         "summary": summary,
                     })
 
                 fn_response_parts.append(
                     types.Part.from_function_response(
-                        name=call.name,
+                        name=name,
                         response={"result": result},
                     )
                 )
