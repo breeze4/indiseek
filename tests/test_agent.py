@@ -12,11 +12,10 @@ from indiseek.agent.loop import (
     CRITIQUE_PROMPT,
     MIN_TOOL_CALLS_FOR_CRITIQUE,
     SYSTEM_PROMPT_TEMPLATE,
-    TOOL_DECLARATIONS,
     AgentLoop,
     AgentResult,
-    EvidenceStep,
 )
+from indiseek.agent.strategy import EvidenceStep, QueryResult
 from indiseek.storage.sqlite_store import SqliteStore, Symbol
 from indiseek.tools.search_code import CodeSearcher, HybridResult
 
@@ -50,28 +49,19 @@ def searcher():
 
 
 class TestToolDeclarations:
-    def test_four_tools_defined(self):
-        assert len(TOOL_DECLARATIONS) == 4
+    def test_four_tools_registered(self, store, repo_dir, searcher):
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        assert len(agent._tool_registry.tool_names) == 4
 
-    def test_tool_names(self):
-        names = {t.name for t in TOOL_DECLARATIONS}
+    def test_tool_names(self, store, repo_dir, searcher):
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        names = set(agent._tool_registry.tool_names)
         assert names == {"read_map", "search_code", "resolve_symbol", "read_file"}
 
-    def test_search_code_has_required_query(self):
-        search_tool = next(t for t in TOOL_DECLARATIONS if t.name == "search_code")
-        schema = search_tool.parameters_json_schema
-        assert "query" in schema["required"]
-
-    def test_resolve_symbol_has_required_fields(self):
-        resolve_tool = next(t for t in TOOL_DECLARATIONS if t.name == "resolve_symbol")
-        schema = resolve_tool.parameters_json_schema
-        assert "symbol_name" in schema["required"]
-        assert "action" in schema["required"]
-
-    def test_read_file_has_required_path(self):
-        read_tool = next(t for t in TOOL_DECLARATIONS if t.name == "read_file")
-        schema = read_tool.parameters_json_schema
-        assert "path" in schema["required"]
+    def test_gemini_declarations_count(self, store, repo_dir, searcher):
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        decls = agent._tool_registry.get_gemini_declarations()
+        assert len(decls) == 4
 
     def test_system_prompt_template_exists(self):
         assert len(SYSTEM_PROMPT_TEMPLATE) > 100
@@ -460,9 +450,18 @@ class TestAgentLoop:
         agent._client.models.generate_content.return_value = text_resp
 
         result = agent.run("What is the answer?")
-        assert isinstance(result, AgentResult)
+        assert isinstance(result, QueryResult)
         assert result.answer == "The answer is 42."
         assert result.evidence == []
+
+    def test_agent_result_alias(self, store, repo_dir, searcher):
+        """AgentResult is an alias for QueryResult (backward compat)."""
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        text_resp = _make_text_response("Answer.")
+        agent._client = MagicMock()
+        agent._client.models.generate_content.return_value = text_resp
+        result = agent.run("Q?")
+        assert isinstance(result, AgentResult)
 
     def test_one_tool_call_then_answer(self, store, repo_dir, searcher):
         """Agent calls one tool then returns text."""
@@ -600,6 +599,15 @@ class TestAgentLoop:
         assert "Main entry point" in prompt
         assert "14 iterations" in prompt
 
+    def test_strategy_name_in_result(self, store, repo_dir, searcher):
+        """QueryResult includes strategy_name='single'."""
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        text_resp = _make_text_response("Answer.")
+        agent._client = MagicMock()
+        agent._client.models.generate_content.return_value = text_resp
+        result = agent.run("Q?")
+        assert result.strategy_name == "single"
+
 
 # ── FastAPI server tests ──
 
@@ -630,14 +638,15 @@ class TestServer:
             return s
 
         mock_loop = MagicMock()
-        mock_loop.run.return_value = AgentResult(
+        mock_loop.run.return_value = QueryResult(
             answer="The answer is 42.",
             evidence=[
                 EvidenceStep(tool="read_map", args={}, summary="Read the map"),
             ],
+            strategy_name="single",
         )
 
-        with patch("indiseek.api.dashboard._get_agent_loop", return_value=mock_loop), \
+        with patch("indiseek.api.dashboard._get_strategy", return_value=mock_loop), \
              patch("indiseek.api.dashboard._get_sqlite_store", side_effect=make_store):
             client = TestClient(app)
             resp = client.post("/api/query", json={"prompt": "What is 42?"})
@@ -663,7 +672,7 @@ class TestServer:
             return s
 
         mock_loop = MagicMock()
-        mock_loop.run.return_value = AgentResult(
+        mock_loop.run.return_value = QueryResult(
             answer="Found it.",
             evidence=[
                 EvidenceStep(
@@ -672,9 +681,10 @@ class TestServer:
                     summary="Searched for hello",
                 ),
             ],
+            strategy_name="single",
         )
 
-        with patch("indiseek.api.dashboard._get_agent_loop", return_value=mock_loop), \
+        with patch("indiseek.api.dashboard._get_strategy", return_value=mock_loop), \
              patch("indiseek.api.dashboard._get_sqlite_store", side_effect=make_store):
             client = TestClient(app)
             resp = client.post("/api/query", json={"prompt": "Find hello"})
@@ -700,7 +710,7 @@ class TestServer:
         mock_loop = MagicMock()
         mock_loop.run.side_effect = RuntimeError("boom")
 
-        with patch("indiseek.api.dashboard._get_agent_loop", return_value=mock_loop), \
+        with patch("indiseek.api.dashboard._get_strategy", return_value=mock_loop), \
              patch("indiseek.api.dashboard._get_sqlite_store", side_effect=make_store):
             client = TestClient(app)
             resp = client.post("/api/query", json={"prompt": "crash"})
@@ -717,7 +727,7 @@ class TestServer:
         assert resp.status_code == 422  # validation error
 
 
-# ── EvidenceStep / AgentResult tests ──
+# ── EvidenceStep / QueryResult tests ──
 
 
 class TestDataclasses:
@@ -727,18 +737,22 @@ class TestDataclasses:
         assert step.args == {"path": "src"}
         assert step.summary == "Read src dir"
 
-    def test_agent_result_default_evidence(self):
-        result = AgentResult(answer="test")
+    def test_query_result_default_evidence(self):
+        result = QueryResult(answer="test")
         assert result.evidence == []
 
-    def test_agent_result_with_evidence(self):
-        result = AgentResult(
+    def test_query_result_with_evidence(self):
+        result = QueryResult(
             answer="test",
             evidence=[
                 EvidenceStep(tool="t", args={}, summary="s"),
             ],
         )
         assert len(result.evidence) == 1
+
+    def test_query_result_metadata(self):
+        result = QueryResult(answer="test", metadata={"plan": "some plan"})
+        assert result.metadata["plan"] == "some plan"
 
 
 # ── Exploration tracking tests ──
@@ -805,9 +819,6 @@ class TestCritiquePhase:
         ])
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
 
-        # We need enough tool calls before iteration CRITIQUE_PHASE.
-        # Each fn_resp adds 1 tool call. We need MIN_TOOL_CALLS_FOR_CRITIQUE calls
-        # before iteration CRITIQUE_PHASE.
         responses = []
         for _ in range(CRITIQUE_PHASE + 1):
             responses.append(_make_fn_call_response("read_map", {}))
@@ -816,21 +827,7 @@ class TestCritiquePhase:
         agent._client = MagicMock()
         agent._client.models.generate_content.side_effect = responses
 
-        # Capture contents passed to generate_content
         captured_contents = []
-        orig_generate = agent._client.models.generate_content
-
-        def _capture_generate(*args, **kwargs):
-            # Capture the contents list (by value snapshot)
-            contents_arg = kwargs.get("contents") or (args[1] if len(args) > 1 else None)
-            if contents_arg is not None:
-                captured_contents.append(list(contents_arg))
-            return orig_generate(*args, **kwargs)
-
-        agent._client.models.generate_content = MagicMock(
-            side_effect=_capture_generate
-        )
-        # Re-set the side_effect on the wrapper
         orig_side_effect = list(responses)
         call_idx = [0]
 
@@ -846,8 +843,6 @@ class TestCritiquePhase:
 
         agent.run("Test critique")
 
-        # Find the contents passed at the CRITIQUE_PHASE iteration call
-        # The critique prompt should appear in one of the captured content lists
         found_critique = False
         for contents_snapshot in captured_contents:
             for content in contents_snapshot:
@@ -863,31 +858,6 @@ class TestCritiquePhase:
         """Critique prompt NOT injected when fewer than MIN_TOOL_CALLS_FOR_CRITIQUE tool calls."""
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
 
-        # Make only 3 tool calls (< MIN_TOOL_CALLS_FOR_CRITIQUE), then keep returning
-        # fn calls until past CRITIQUE_PHASE, but with only 1 tool call each they
-        # won't reach the minimum. Actually, each iteration has 1 tool call, so by
-        # iteration 15 we'd have 15 tool calls. We need to simulate fewer total calls.
-        # Strategy: make only 3 iterations with tool calls, then text response on iteration 4.
-        # But that means we never reach CRITIQUE_PHASE.
-        #
-        # Better: we need to reach iteration CRITIQUE_PHASE with < MIN tool calls.
-        # That means most iterations return text (no tool calls) but not a final answer.
-        # But text responses end the loop. So we can't easily have iterations without tool calls.
-        #
-        # The simplest approach: verify the condition directly. Create an agent,
-        # set tool_call_count manually, and check that critique is NOT injected.
-        # But we can't set tool_call_count — it's a local variable in run().
-        #
-        # Alternative: Run with only 3 tool calls followed by a text answer before
-        # reaching CRITIQUE_PHASE. Then the critique was never injected.
-        # But that doesn't test the "skipped" case, just the "never reached" case.
-        #
-        # The real test: mock so that each tool call returns 0 additional function calls
-        # after a certain point. Actually, let's use a simpler approach: verify the
-        # condition logic by checking contents don't contain critique prompt when
-        # we have only a few tool calls.
-
-        # 3 tool calls then immediate text response (never reaches CRITIQUE_PHASE)
         responses = []
         for _ in range(3):
             responses.append(_make_fn_call_response("read_map", {}))
@@ -908,7 +878,6 @@ class TestCritiquePhase:
         result = agent.run("Simple question")
         assert result.answer == "Quick answer."
 
-        # Verify critique prompt was NOT injected
         for contents_snapshot in captured_contents:
             for content in contents_snapshot:
                 if hasattr(content, "parts"):
@@ -925,8 +894,6 @@ class TestCritiquePhase:
         ])
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
 
-        # Build enough responses: CRITIQUE_PHASE iterations of tool calls,
-        # then a text response
         responses = []
         for _ in range(CRITIQUE_PHASE + 2):
             responses.append(_make_fn_call_response("read_map", {}))
@@ -945,12 +912,8 @@ class TestCritiquePhase:
 
         agent.run("Test critique tools")
 
-        # At iteration CRITIQUE_PHASE (0-based index 15), the config should be
-        # research_config (tools enabled), NOT synthesis_config
-        # CRITIQUE_PHASE is iteration index 15, which is the 16th call (0-indexed)
         assert len(captured_configs) > CRITIQUE_PHASE
         critique_config = captured_configs[CRITIQUE_PHASE]
-        # research_config has function_calling mode "AUTO"
         fc_config = critique_config.tool_config.function_calling_config
         assert fc_config.mode == "AUTO", \
             f"Expected AUTO (tools enabled) at critique phase, got {fc_config.mode}"

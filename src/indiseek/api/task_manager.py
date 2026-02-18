@@ -60,12 +60,16 @@ class TaskManager:
             try:
                 result = fn(**kwargs)
                 with self._lock:
+                    if task_id not in self._tasks:
+                        return
                     self._tasks[task_id]["status"] = "completed"
                     self._tasks[task_id]["result"] = result
                 self._broadcast(task_id, {"type": "done", "result": result})
             except Exception as e:
                 logger.exception("Task %s (%s) failed", task_id, name)
                 with self._lock:
+                    if task_id not in self._tasks:
+                        return
                     self._tasks[task_id]["status"] = "failed"
                     self._tasks[task_id]["error"] = traceback.format_exc()
                 self._broadcast(task_id, {"type": "error", "error": str(e)})

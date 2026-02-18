@@ -166,3 +166,35 @@ In frontend:
 - [ ] `pytest` passes
 - [ ] `ruff check src/` clean
 - [ ] Manual: index a repo without `--summarize`, confirm summary-status shows all missing, run summarize-missing, confirm counts update
+
+---
+
+## Phase 9: Fix Test Suite Issues
+
+Two issues observed when running the full test suite (`pytest`, 341 tests, ~2min):
+
+### 9a: Researcher tool error in tests
+
+A `Researcher tool error: resolve_symbol: 'symbol_name'` log line appears during the test run. A mock or test fixture is passing args without the `symbol_name` key. Either the test is incomplete or the error path isn't handling missing keys gracefully.
+
+- [ ] Find which test triggers this log line (run `pytest -s --log-cli-level=INFO` and grep for "Researcher tool error")
+- [ ] Fix the test to pass valid args, or fix the tool execution to handle missing keys with a clear error message
+- [ ] Confirm no error log lines appear during a clean test run
+
+### 9b: TaskManager KeyError race condition
+
+```
+Task e4ec5656-... (query) failed
+KeyError: 'e4ec5656-...'
+```
+
+The `_run` method in `TaskManager` tries to set `self._tasks[task_id]["status"]` after the task completes, but the task has already been cleaned up. This is a race between task completion and task cleanup/expiry.
+
+- [ ] Read `src/indiseek/api/task_manager.py` and trace the lifecycle of `_tasks[task_id]`
+- [ ] Add a guard in `_run` so it doesn't crash if the task was already cleaned up
+- [ ] Add a test for this edge case
+
+**Verify:**
+- [ ] `pytest` passes
+- [ ] `ruff check src/` clean
+- [ ] No error/warning log lines from the test suite itself (only from intentional error-path tests)

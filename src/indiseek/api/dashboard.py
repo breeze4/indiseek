@@ -16,26 +16,39 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from indiseek import config
+from indiseek.agent.strategy import strategy_registry
 from indiseek.api.task_manager import TaskManager
 from indiseek.git_utils import GitError
+
+# Trigger strategy registration on import
+import indiseek.agent.loop  # noqa: F401, E402
+import indiseek.agent.multi  # noqa: F401, E402
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _task_manager = TaskManager()
 
-# Lazy-initialized agent loops, keyed by repo_id
-_agent_loops: dict[int, object] = {}
+# Lazy-initialized strategies, keyed by (strategy_name, repo_id)
+_strategy_cache: dict[tuple[str, int], object] = {}
 
 
-def _get_agent_loop(repo_id: int = 1):
-    if repo_id not in _agent_loops:
-        from indiseek.agent.loop import create_agent_loop
-        logger.info("Initializing agent loop for repo_id=%d...", repo_id)
+def _get_strategy(name: str, repo_id: int = 1):
+    """Get or create a cached strategy instance."""
+    key = (name, repo_id)
+    if key not in _strategy_cache:
+        logger.info("Initializing strategy %r for repo_id=%d...", name, repo_id)
         t0 = time.perf_counter()
-        _agent_loops[repo_id] = create_agent_loop(repo_id=repo_id)
-        logger.info("Agent loop ready (%.2fs)", time.perf_counter() - t0)
-    return _agent_loops[repo_id]
+        _strategy_cache[key] = strategy_registry.create(name, repo_id=repo_id)
+        logger.info("Strategy %r ready (%.2fs)", name, time.perf_counter() - t0)
+    return _strategy_cache[key]
+
+
+def _resolve_strategy_name(prompt: str, mode: str) -> str:
+    """Resolve 'auto' mode to a concrete strategy name."""
+    if mode == "auto":
+        return strategy_registry.auto_select(prompt)
+    return mode
 
 
 # ── Health ──
@@ -46,12 +59,25 @@ def health():
     return {"status": "ok"}
 
 
+# ── Strategies ──
+
+
+@router.get("/strategies")
+def list_strategies():
+    """List available query strategies."""
+    # Ensure strategies are registered by importing the modules
+    import indiseek.agent.loop  # noqa: F401
+    import indiseek.agent.multi  # noqa: F401
+    return {"strategies": strategy_registry.list_strategies()}
+
+
 # ── Synchronous query (for curl / direct API usage) ──
 
 
 class SyncQueryRequest(BaseModel):
     prompt: str
     repo_id: int = 1
+    mode: str = "auto"  # "auto", "single", "multi"
 
 
 class EvidenceStepResponse(BaseModel):
@@ -73,11 +99,21 @@ def sync_query(req: SyncQueryRequest):
     if not store:
         raise HTTPException(status_code=503, detail="SQLite store not available")
 
+    # Validate strategy name
+    strategy_name = _resolve_strategy_name(req.prompt, req.mode)
+    available = strategy_registry.list_strategies()
+    if strategy_name not in available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown strategy {strategy_name!r}. Available: {', '.join(available)}",
+        )
+
     query_id = store.insert_query(req.prompt, repo_id=req.repo_id)
     t0 = time.perf_counter()
     try:
-        agent = _get_agent_loop(repo_id=req.repo_id)
-        result = agent.run(req.prompt)
+        logger.info("Using strategy %r", strategy_name)
+        strategy = _get_strategy(strategy_name, repo_id=req.repo_id)
+        result = strategy.run(req.prompt)
         elapsed = time.perf_counter() - t0
         logger.info(
             "Query complete: %d evidence steps, %d char answer, %.2fs total",
@@ -685,6 +721,7 @@ class QueryRequest(BaseModel):
     prompt: str
     force: bool = False
     repo_id: int = 1
+    mode: str = "auto"  # "auto", "single", "multi"
 
 
 class RunRequest(BaseModel):
@@ -923,7 +960,13 @@ def run_query_op(req: QueryRequest):
     if _task_manager.has_running_task():
         raise HTTPException(status_code=409, detail="A task is already running")
 
-    from indiseek.agent.loop import create_agent_loop
+    strategy_name = _resolve_strategy_name(prompt, req.mode)
+    available = strategy_registry.list_strategies()
+    if strategy_name not in available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown strategy {strategy_name!r}. Available: {', '.join(available)}",
+        )
 
     # Persist query in SQLite
     query_id = store.insert_query(prompt, repo_id=req.repo_id)
@@ -934,8 +977,8 @@ def run_query_op(req: QueryRequest):
         qstore.init_db()
         start = time.monotonic()
         try:
-            agent = create_agent_loop(repo_id=req.repo_id)
-            result = agent.run(prompt, on_progress=_make_progress_callback(task_id))
+            strategy = strategy_registry.create(strategy_name, repo_id=req.repo_id)
+            result = strategy.run(prompt, on_progress=_make_progress_callback(task_id))
             duration = time.monotonic() - start
             evidence = [
                 {"tool": e.tool, "args": e.args, "summary": e.summary}

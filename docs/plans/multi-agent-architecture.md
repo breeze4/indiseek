@@ -279,12 +279,12 @@ Add dataclasses for the evidence bundle, finding, sub-question plan, and verific
 
 File: `src/indiseek/agent/multi.py` (new file)
 
-- [ ] `SubQuestion` dataclass: question, target_area, initial_actions
-- [ ] `ResearchPlan` dataclass: original_question, sub_questions list
-- [ ] `Finding` dataclass: tool, args, result_summary, relevant_code, file_path, line_range
-- [ ] `EvidenceBundle` dataclass: sub_question, findings, coverage_note
-- [ ] `VerificationResult` dataclass: claim, status (verified/corrected/unverifiable), correction
-- [ ] `MultiAgentResult` dataclass: answer, evidence_bundles, verification_results, plan
+- [x] `SubQuestion` dataclass: question, target_area, initial_actions
+- [x] `ResearchPlan` dataclass: original_question, sub_questions list
+- [x] `Finding` dataclass: tool, args, result_summary, relevant_code, file_path, line_range
+- [x] `EvidenceBundle` dataclass: sub_question, findings, coverage_note
+- [x] `VerificationResult` dataclass: claim, status (verified/corrected/unverifiable), correction
+- [x] `MultiAgentResult` dataclass: answer, evidence_bundles, verification_results, plan
 
 ### Step 2: Planner Agent
 
@@ -292,10 +292,10 @@ Single-call LLM agent that decomposes a question into sub-questions.
 
 File: `src/indiseek/agent/multi.py`
 
-- [ ] `PlannerAgent` class with `plan(question, repo_map) -> ResearchPlan`
-- [ ] System prompt that instructs decomposition with subsystem awareness
-- [ ] JSON output parsing with fallback for malformed responses
-- [ ] Unit test: given a question and mock repo map, produces valid ResearchPlan
+- [x] `PlannerAgent` class with `plan(question, repo_map) -> ResearchPlan`
+- [x] System prompt that instructs decomposition with subsystem awareness
+- [x] JSON output parsing with fallback for malformed responses
+- [x] Unit test: given a question and mock repo map, produces valid ResearchPlan
 
 ### Step 3: Researcher Agent
 
@@ -303,12 +303,12 @@ Tool-calling agent loop (reuse existing `_execute_tool` logic) scoped to one sub
 
 File: `src/indiseek/agent/multi.py`
 
-- [ ] `ResearcherAgent` class with `research(sub_question, repo_map, store, searcher) -> EvidenceBundle`
-- [ ] Reuses `AgentLoop._execute_tool` (extract to shared method or mixin)
-- [ ] Shorter budget: 8 iterations, synthesis at 7
-- [ ] Evidence condensation turn at end: asks LLM to summarize findings into structured format
-- [ ] Question reiteration per turn (carry over from single-agent, proven useful)
-- [ ] Unit test: given a sub-question and mock tools, produces valid EvidenceBundle
+- [x] `ResearcherAgent` class with `research(sub_question, repo_map, store, searcher) -> EvidenceBundle`
+- [x] Reuses `AgentLoop._execute_tool` (extract to shared method or mixin)
+- [x] Shorter budget: 8 iterations, synthesis at 7
+- [x] Evidence condensation turn at end: asks LLM to summarize findings into structured format
+- [x] Question reiteration per turn (carry over from single-agent, proven useful)
+- [x] Unit test: given a sub-question and mock tools, produces valid EvidenceBundle
 
 ### Step 4: Synthesizer Agent
 
@@ -316,10 +316,10 @@ Single-call LLM agent that produces the answer from evidence bundles.
 
 File: `src/indiseek/agent/multi.py`
 
-- [ ] `SynthesizerAgent` class with `synthesize(question, evidence_bundles) -> str`
-- [ ] System prompt that emphasizes cross-subsystem coherence and citation requirements
-- [ ] Accepts optional model override (for testing Pro vs Flash)
-- [ ] Unit test: given evidence bundles, produces coherent answer
+- [x] `SynthesizerAgent` class with `synthesize(question, evidence_bundles) -> str`
+- [x] System prompt that emphasizes cross-subsystem coherence and citation requirements
+- [x] Accepts optional model override (for testing Pro vs Flash)
+- [x] Unit test: given evidence bundles, produces coherent answer
 
 ### Step 5: Verifier Agent
 
@@ -327,11 +327,11 @@ Tool-calling agent loop that checks claims in the synthesized answer.
 
 File: `src/indiseek/agent/multi.py`
 
-- [ ] `VerifierAgent` class with `verify(answer, store, searcher) -> list[VerificationResult]`
-- [ ] System prompt that extracts claims and verifies each with targeted tool calls
-- [ ] Short budget: 6 iterations
-- [ ] If corrections found, revises the answer
-- [ ] Unit test: given an answer with a deliberate inaccuracy, detects it
+- [x] `VerifierAgent` class with `verify(answer, store, searcher) -> list[VerificationResult]`
+- [x] System prompt that extracts claims and verifies each with targeted tool calls
+- [x] Short budget: 6 iterations
+- [x] If corrections found, revises the answer
+- [x] Unit test: given an answer with a deliberate inaccuracy, detects it
 
 ### Step 6: Orchestrator
 
@@ -339,11 +339,11 @@ Ties the four agents together into the full pipeline. Handles routing (multi-age
 
 File: `src/indiseek/agent/multi.py`
 
-- [ ] `MultiAgentOrchestrator` class with `run(question) -> MultiAgentResult`
-- [ ] Routing heuristic: classify question as simple or complex
-- [ ] Sequential execution: planner → researchers → synthesizer → verifier
-- [ ] Progress callbacks for each phase (compatible with existing SSE streaming)
-- [ ] Fallback: if planner fails or produces 1 sub-question, use single-agent loop
+- [x] `MultiAgentOrchestrator` class with `run(question) -> MultiAgentResult`
+- [x] Routing heuristic: classify question as simple or complex
+- [x] Sequential execution: planner → researchers → synthesizer → verifier
+- [x] Progress callbacks for each phase (compatible with existing SSE streaming)
+- [x] Fallback: if planner fails or produces 1 sub-question, use single-agent loop
 
 ### Step 7: Integration with API
 
@@ -351,10 +351,10 @@ Wire the orchestrator into the existing `/api/query` endpoint.
 
 File: `src/indiseek/api/dashboard.py`
 
-- [ ] Add `mode` parameter to query endpoint: "auto" (default), "single", "multi"
-- [ ] "auto" uses routing heuristic, "single" forces current loop, "multi" forces multi-agent
-- [ ] Update SSE progress events to include phase information
-- [ ] Update `AgentResult` or response format to include multi-agent metadata
+- [x] Add `mode` parameter to query endpoint: "auto" (default), "single", "multi"
+- [x] "auto" uses routing heuristic, "single" forces current loop, "multi" forces multi-agent
+- [x] Update SSE progress events to include phase information
+- [x] Update `AgentResult` or response format to include multi-agent metadata
 
 ### Step 8: Eval and Tuning
 

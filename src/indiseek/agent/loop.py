@@ -5,23 +5,26 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from google import genai
 from google.genai import types
 
 from indiseek import config
+from indiseek.agent.strategy import (
+    EvidenceStep,
+    QueryResult,
+    ToolRegistry,
+    build_tool_registry,
+    strategy_registry,
+)
 from indiseek.indexer.lexical import LexicalIndexer
 from indiseek.storage.sqlite_store import SqliteStore
 from indiseek.storage.vector_store import VectorStore
-from indiseek.tools.read_file import format_file_content
 from indiseek.tools.read_map import read_map
-from indiseek.tools.resolve_symbol import resolve_symbol
 from indiseek.tools.search_code import (
     CodeSearcher,
     QueryCache,
-    format_results,
     strip_file_paths,
     summarize_results,
 )
@@ -99,116 +102,6 @@ Be thorough but efficient. Don't read entire files when a targeted search suffic
 Don't repeat a search you've already done. Synthesize your findings into a clear, \
 structured answer with evidence."""
 
-TOOL_DECLARATIONS = [
-    types.FunctionDeclaration(
-        name="read_map",
-        description="Returns directory structure and file summaries for a subdirectory. "
-        "The full repository map is already in the system prompt — use this tool only "
-        "to drill into a specific subdirectory for more detail.",
-        parameters_json_schema={
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Subdirectory path to scope results to.",
-                },
-            },
-        },
-    ),
-    types.FunctionDeclaration(
-        name="search_code",
-        description=(
-            "Search code by meaning or keywords. Returns top 10 code chunks ranked by relevance.\n"
-            "\n"
-            "Modes:\n"
-            '- "lexical": Exact identifiers (updateStyle, handleHMRUpdate, ERR_NOT_FOUND)\n'
-            '- "semantic": Concepts ("how CSS changes are applied in the browser")\n'
-            '- "hybrid" (default): Combines both. Best when unsure.\n'
-            "\n"
-            "For symbol cross-references (who calls X, where is X defined), use resolve_symbol instead.\n"
-            "For reading a specific file you already know, use read_file instead."
-        ),
-        parameters_json_schema={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Plain search query — natural language or code "
-                    "identifiers. No special syntax or field filters.",
-                },
-                "mode": {
-                    "type": "string",
-                    "description": "Search mode: 'hybrid' (default), 'semantic', or 'lexical'.",
-                    "enum": ["hybrid", "semantic", "lexical"],
-                },
-            },
-            "required": ["query"],
-        },
-    ),
-    types.FunctionDeclaration(
-        name="resolve_symbol",
-        description=(
-            "Navigate the code's call graph using precise cross-reference data. More accurate "
-            "than searching for symbol names — use this as your primary navigation tool after "
-            "initial discovery.\n"
-            "\n"
-            "Actions:\n"
-            '- "definition": Where is this symbol defined? Start here.\n'
-            '- "references": Where is this symbol used across the codebase?\n'
-            '- "callers": What functions call this symbol? Understand usage patterns.\n'
-            '- "callees": What does this function call? Trace execution flow downward.\n'
-            "\n"
-            "Tip: After search_code finds a symbol, call resolve_symbol('name', 'definition') "
-            "AND resolve_symbol('name', 'callers') together to get the full picture in one turn."
-        ),
-        parameters_json_schema={
-            "type": "object",
-            "properties": {
-                "symbol_name": {
-                    "type": "string",
-                    "description": "Name of the symbol to look up.",
-                },
-                "action": {
-                    "type": "string",
-                    "description": "What to look up.",
-                    "enum": ["definition", "references", "callers", "callees"],
-                },
-            },
-            "required": ["symbol_name", "action"],
-        },
-    ),
-    types.FunctionDeclaration(
-        name="read_file",
-        description=(
-            "Read source code with line numbers. Default cap is 200 lines. "
-            "Use start_line/end_line for large files.\n"
-            "\n"
-            "Use this when you know the file path and need to examine the actual implementation.\n"
-            "This is the ONLY way to scope to a specific file — search_code cannot filter by path.\n"
-            "Reading the implementation after finding a symbol is almost always more valuable "
-            "than running another search."
-        ),
-        parameters_json_schema={
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Relative file path within the repository.",
-                },
-                "start_line": {
-                    "type": "integer",
-                    "description": "First line to read (1-based, inclusive). Optional.",
-                },
-                "end_line": {
-                    "type": "integer",
-                    "description": "Last line to read (1-based, inclusive). Optional.",
-                },
-            },
-            "required": ["path"],
-        },
-    ),
-]
-
 
 def _error_hint(tool_name: str, args: dict, error_msg: str) -> str:
     """Return a corrective hint when a tool call fails."""
@@ -244,25 +137,14 @@ def _error_hint(tool_name: str, args: dict, error_msg: str) -> str:
     return "\nHINT: " + " ".join(hints)
 
 
-@dataclass
-class EvidenceStep:
-    """One step in the agent's evidence trail."""
-
-    tool: str
-    args: dict
-    summary: str
-
-
-@dataclass
-class AgentResult:
-    """Result from an agent run."""
-
-    answer: str
-    evidence: list[EvidenceStep] = field(default_factory=list)
+# Backward-compat alias — external code that imported AgentResult still works
+AgentResult = QueryResult
 
 
 class AgentLoop:
     """Gemini-powered agent loop with tool calling."""
+
+    name = "single"
 
     def __init__(
         self,
@@ -272,6 +154,7 @@ class AgentLoop:
         api_key: str | None = None,
         model: str | None = None,
         repo_id: int = 1,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self._store = store
         self._repo_path = repo_path
@@ -287,6 +170,13 @@ class AgentLoop:
         self._files_read: set[str] = set()
         self._symbols_resolved: set[tuple[str, str]] = set()
         self._original_prompt: str = ""
+        # Build tool registry if not provided
+        self._tool_registry = tool_registry or build_tool_registry(
+            store, code_searcher, repo_id,
+            file_cache=self._file_cache,
+            query_cache=self._query_cache,
+            resolve_cache=self._resolve_cache,
+        )
 
     def _build_system_prompt(self) -> str:
         """Build system prompt with the top-level repo map baked in."""
@@ -297,89 +187,15 @@ class AgentLoop:
         )
 
     def _execute_tool(self, name: str, args: dict) -> str:
-        """Execute a tool by name with the given arguments."""
-        logger.debug("  tool exec: %s(%s)", name, args)
-        t0 = time.perf_counter()
-
-        if name == "read_map":
-            result = read_map(self._store, path=args.get("path"), repo_id=self._repo_id)
-        elif name == "search_code":
-            query = strip_file_paths(args["query"])
-            mode = args.get("mode", "hybrid")
-            cached = self._query_cache.get(query)
-            if cached is not None:
-                result = (
-                    f"[Cache hit — similar query already executed]\n{cached}"
-                )
-            else:
-                results = self._searcher.search(query, mode=mode, limit=10)
-                result = format_results(results, query)
-                self._query_cache.put(query, result)
-        elif name == "resolve_symbol":
+        """Execute a tool via the registry, tracking additional state."""
+        # Track resolve_symbol usage for hints
+        if name == "resolve_symbol":
             self._resolve_symbol_used = True
-            symbol_name = args["symbol_name"]
-            action = args["action"]
-            self._symbols_resolved.add((symbol_name, action))
-            cache_key = (symbol_name, action)
-            if cache_key in self._resolve_cache:
-                logger.debug("  resolve cache hit: %s/%s", symbol_name, action)
-                result = f"[Cache hit]\n{self._resolve_cache[cache_key]}"
-            else:
-                result = resolve_symbol(self._store, symbol_name, action, repo_id=self._repo_id)
-                self._resolve_cache[cache_key] = result
+            self._symbols_resolved.add((args.get("symbol_name", ""), args.get("action", "")))
         elif name == "read_file":
-            file_path = args["path"]
-            start_line = args.get("start_line")
-            end_line = args.get("end_line")
+            self._files_read.add(args.get("path", ""))
 
-            # Enforce minimum read window: if range < 100 lines, expand to
-            # 150 lines centered on the midpoint of the requested range.
-            if start_line is not None and end_line is not None:
-                span = end_line - start_line + 1
-                if span < 100:
-                    mid = (start_line + end_line) // 2
-                    start_line = max(1, mid - 75)
-                    end_line = start_line + 149
-                    logger.debug(
-                        "  read_file: expanded range to %d-%d (150 lines)",
-                        start_line, end_line,
-                    )
-
-            if file_path in self._file_cache:
-                logger.debug("  file cache hit: %s", file_path)
-                content = self._file_cache[file_path]
-                result = format_file_content(content, file_path, start_line, end_line)
-            else:
-                # Read from SQLite (source of truth)
-                content = self._store.get_file_content(file_path, repo_id=self._repo_id)
-                if content is None:
-                    result = f"Error: File '{file_path}' not found in index."
-                    content = None
-                else:
-                    self._file_cache[file_path] = content
-                    result = format_file_content(content, file_path, start_line, end_line)
-
-            self._files_read.add(file_path)
-
-            # Add implicit symbol definitions found in this range
-            if content is not None:
-                # If no range, format_file_content uses DEFAULT_LINE_CAP (500)
-                from indiseek.tools.read_file import DEFAULT_LINE_CAP
-                s = start_line or 1
-                e = end_line or min(len(content.splitlines()), DEFAULT_LINE_CAP)
-
-                symbols = self._store.get_symbols_in_range(file_path, s, e, repo_id=self._repo_id)
-                if symbols:
-                    sym_lines = ["\nSymbols defined in this range:"]
-                    for sym in symbols:
-                        sym_lines.append(f"  - {sym['name']} ({sym['kind']}) at line {sym['start_line']}")
-                    result += "\n" + "\n".join(sym_lines)
-        else:
-            result = f"Unknown tool: {name}"
-
-        elapsed = time.perf_counter() - t0
-        logger.debug("  tool done: %s -> %d chars (%.3fs)", name, len(result), elapsed)
-        return result
+        return self._tool_registry.execute(name, args)
 
     def _maybe_inject_tool_hint(self, iteration: int) -> str | None:
         """Return a hint nudging the model toward better behavior based on progress."""
@@ -395,7 +211,7 @@ class AgentLoop:
         self,
         prompt: str,
         on_progress: Callable[[dict], None] | None = None,
-    ) -> AgentResult:
+    ) -> QueryResult:
         """Run the agent loop until a text answer is produced or max iterations reached."""
         logger.info("Agent run started: %r", prompt[:120])
         run_t0 = time.perf_counter()
@@ -414,7 +230,8 @@ class AgentLoop:
         system_prompt = self._build_system_prompt()
         logger.debug("System prompt built: %d chars (%.3fs)", len(system_prompt), time.perf_counter() - t0)
 
-        tools = [types.Tool(function_declarations=TOOL_DECLARATIONS)]
+        gemini_decls = self._tool_registry.get_gemini_declarations()
+        tools = [types.Tool(function_declarations=gemini_decls)]
         research_config = types.GenerateContentConfig(
             tools=tools,
             system_instruction=system_prompt,
@@ -493,7 +310,7 @@ class AgentLoop:
                     "LLM returned final answer: %d chars (LLM %.2fs, total %.2fs)",
                     len(answer), llm_elapsed, total,
                 )
-                return AgentResult(answer=answer, evidence=evidence)
+                return QueryResult(answer=answer, evidence=evidence, strategy_name=self.name)
 
             # Log what the model wants to call
             call_names = [c.name for c in response.function_calls]
@@ -524,6 +341,7 @@ class AgentLoop:
                             summary = f"Search (Cache Hit): {query}"
                         else:
                             results = self._searcher.search(query, mode=mode, limit=10)
+                            from indiseek.tools.search_code import format_results
                             result = format_results(results, query)
                             self._query_cache.put(query, result)
                             summary = f"Search: {query} -> {summarize_results(results)}"
@@ -620,10 +438,11 @@ class AgentLoop:
         # Max iterations reached
         total = time.perf_counter() - run_t0
         logger.warning("Max iterations (%d) reached without final answer (%.2fs)", MAX_ITERATIONS, total)
-        return AgentResult(
+        return QueryResult(
             answer="Agent reached maximum iterations without producing a final answer. "
             "Partial evidence has been collected.",
             evidence=evidence,
+            strategy_name=self.name,
         )
 
 
@@ -710,3 +529,31 @@ def create_agent_loop(
         model=model,
         repo_id=repo_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Strategy registration
+# ---------------------------------------------------------------------------
+
+
+def _create_single_strategy(
+    repo_id: int = 1,
+    store: SqliteStore | None = None,
+    repo_path: Path | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+    **_kwargs,
+) -> AgentLoop:
+    """Factory function for the 'single' strategy."""
+    return create_agent_loop(
+        store=store, repo_path=repo_path, api_key=api_key, model=model, repo_id=repo_id,
+    )
+
+
+def register_single_strategy() -> None:
+    """Register the single-agent strategy with the global registry."""
+    strategy_registry.register("single", _create_single_strategy)
+
+
+# Auto-register on import
+register_single_strategy()
