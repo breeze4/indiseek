@@ -716,3 +716,38 @@ _Session duration: 6m 11s — 2026-02-17 15:48:48_
 ### Notes
 - This is a frontend-only phase — no Python changes needed. The backend already accepts `repo_id` on all endpoints (added in Phase 12).
 - The `useCurrentRepo()` hook reads from React context, not from URL params. This means repo selection is global across all pages and persists via localStorage.
+
+_Session duration: 9m 39s — 2026-02-17 15:58:27_
+
+---
+
+## Master Phase 15: Multi-Repo — Cleanup + Tests
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+**Commit**: `cb5e713`
+
+### Files Modified
+- `src/indiseek/storage/sqlite_store.py` — Added `_migrate_composite_unique()` method for table reconstruction. Added migrations to fix UNIQUE constraints on `file_contents`, `directory_summaries`, `file_summaries`, and `scip_symbols` tables to be composite `(col, repo_id)` instead of single-column. This ensures data isolation between repos sharing the same file paths.
+- `tests/test_repos.py` — Added `TestRepoDataIsolation` class (10 tests): symbols, chunks, file_summaries, file_contents, directory_summaries, queries, scip_symbols isolated by repo_id; clear_index_data scoped; count scoped. Added `Chunk` import.
+- `tests/test_dashboard.py` — Added `TestUnscopedEndpointAliases` class (4 tests): stats, search, queries, files endpoints all work without `repo_id` parameter, defaulting to repo_id=1.
+- `.env.example` — Added comment explaining REPO_PATH is optional for multi-repo (only needed for legacy single-repo usage).
+- `docs/SPEC.md` — Added "Multi-Repo Architecture" section documenting storage layout, API, CLI, and frontend. Updated MVP notes to reflect multi-repo and query caching as implemented. Updated roadmap to mark repo management as done.
+- `CLAUDE.md` — Updated Index section with `--repo`, `--dry-run`, `--filter` examples. Added "Multi-Repo Management" section with API examples. Updated Query section with repo_id example. Updated Project Layout with git_utils, sqlite_store, config entries.
+- `docs/plans/master.md` — Marked all Phase 15 items complete.
+
+### Test Results
+- 336/336 tests passing (323 existing + 10 repo isolation + 4 un-scoped alias - 1 overlap)
+- `ruff check src/` — all checks passed
+- `cd frontend && npm run build` — succeeds
+
+### Implementation Details
+- **Composite UNIQUE migration**: The `_migrate_composite_unique()` method checks the table's DDL for the target constraint. If missing, it recreates the table: CREATE temp table with new schema → INSERT from old → DROP old → RENAME temp. This is the standard SQLite approach since ALTER TABLE cannot modify constraints.
+- **Tables migrated**: `file_contents(file_path, repo_id)`, `directory_summaries(dir_path, repo_id)`, `file_summaries(file_path, repo_id)`, `scip_symbols(symbol, repo_id)`. All four had single-column uniqueness that would cause data collisions between repos.
+- **REPO_PATH already optional**: `config.py` already defaults REPO_PATH to `Path("")` and `scripts/index.py` already handles `--repo` without REPO_PATH. Only `.env.example` needed documentation.
+- **Un-scoped endpoint aliases verified**: Tests confirm all major endpoints work without `repo_id` parameter, defaulting to repo_id=1.
+
+### Notes
+- The Phase 8 progress notes explicitly deferred the `file_contents` composite key fix to Phase 15. This phase also discovered that `file_summaries`, `directory_summaries`, and `scip_symbols` had the same issue — all fixed together.
+- The migration is idempotent — if the composite constraint already exists in the DDL, the migration is skipped.
+- `test_repos.py` grew from 48 to 57 tests (48 existing + 10 isolation - 1 shared fixture). `test_dashboard.py` grew from 24 to 28 tests.

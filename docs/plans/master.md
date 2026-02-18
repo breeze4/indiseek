@@ -357,13 +357,13 @@ Final cleanup, test coverage, documentation updates.
 
 **Implementation:**
 
-- [ ] **9.1** Update all existing tests to use `repo_id` parameter explicitly. Add `tests/test_repos.py` for repo CRUD. All tests pass.
-- [ ] **9.2** Make `REPO_PATH` optional in config. Update `.env.example` with comment. Update `scripts/index.py` to work without it when `--repo` is specified.
-- [ ] **9.3** Verify un-scoped API endpoints still work as aliases for repo_id=1.
-- [ ] **9.4** Update `docs/SPEC.md`: multi-repo section, `repos` table schema, per-repo storage layout.
-- [ ] **9.5** Update `CLAUDE.md`: `scripts/index.py --repo <name-or-id>` documentation, dashboard repo management workflow.
+- [x] **9.1** Update all existing tests to use `repo_id` parameter explicitly. Add `tests/test_repos.py` for repo CRUD. All tests pass.
+- [x] **9.2** Make `REPO_PATH` optional in config. Update `.env.example` with comment. Update `scripts/index.py` to work without it when `--repo` is specified.
+- [x] **9.3** Verify un-scoped API endpoints still work as aliases for repo_id=1.
+- [x] **9.4** Update `docs/SPEC.md`: multi-repo section, `repos` table schema, per-repo storage layout.
+- [x] **9.5** Update `CLAUDE.md`: `scripts/index.py --repo <name-or-id>` documentation, dashboard repo management workflow.
 
 **Verify:**
-- [ ] `pytest` passes
-- [ ] `ruff check src/` clean
-- [ ] `cd frontend && npm run build` succeeds
+- [x] `pytest` passes
+- [x] `ruff check src/` clean
+- [x] `cd frontend && npm run build` succeeds

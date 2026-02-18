@@ -1,4 +1,4 @@
-"""Tests for multi-repo schema, migrations, and CRUD methods."""
+"""Tests for multi-repo schema, migrations, CRUD, and data isolation."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from indiseek.storage.sqlite_store import SqliteStore, Symbol
+from indiseek.storage.sqlite_store import Chunk, SqliteStore, Symbol
 
 
 @pytest.fixture
@@ -239,3 +239,115 @@ class TestRepoCRUD:
         store.insert_repo("myrepo", "/path1")
         with pytest.raises(Exception):  # sqlite3.IntegrityError
             store.insert_repo("myrepo", "/path2")
+
+
+class TestRepoDataIsolation:
+    """Verify that data is isolated between repos when using explicit repo_id."""
+
+    def test_symbols_isolated_by_repo_id(self, store):
+        """Symbols inserted for repo_id=1 are not visible for repo_id=2."""
+        store.insert_symbols([
+            Symbol(None, "src/a.ts", "foo", "function", 1, 0, 5, 1, None, None),
+        ], repo_id=1)
+        store.insert_symbols([
+            Symbol(None, "src/a.ts", "bar", "function", 10, 0, 15, 1, None, None),
+        ], repo_id=2)
+        r1 = store.get_symbols_by_file("src/a.ts", repo_id=1)
+        r2 = store.get_symbols_by_file("src/a.ts", repo_id=2)
+        assert len(r1) == 1
+        assert r1[0]["name"] == "foo"
+        assert len(r2) == 1
+        assert r2[0]["name"] == "bar"
+
+    def test_chunks_isolated_by_repo_id(self, store):
+        """Chunks inserted for repo_id=1 are not visible for repo_id=2."""
+        store.insert_chunks([
+            Chunk(None, "src/a.ts", "fn1", "function", 1, 5, "code1", 4),
+        ], repo_id=1)
+        store.insert_chunks([
+            Chunk(None, "src/a.ts", "fn2", "function", 1, 5, "code2", 4),
+        ], repo_id=2)
+        c1 = store.get_chunks_by_file("src/a.ts", repo_id=1)
+        c2 = store.get_chunks_by_file("src/a.ts", repo_id=2)
+        assert len(c1) == 1
+        assert c1[0]["symbol_name"] == "fn1"
+        assert len(c2) == 1
+        assert c2[0]["symbol_name"] == "fn2"
+
+    def test_file_summaries_isolated_by_repo_id(self, store):
+        """File summaries are scoped by repo_id."""
+        store.insert_file_summaries([
+            ("src/a.ts", "Summary for repo 1", "ts", 10),
+        ], repo_id=1)
+        store.insert_file_summaries([
+            ("src/a.ts", "Summary for repo 2", "ts", 10),
+        ], repo_id=2)
+        s1 = store.get_file_summaries(repo_id=1)
+        s2 = store.get_file_summaries(repo_id=2)
+        assert len(s1) == 1
+        assert s1[0]["summary"] == "Summary for repo 1"
+        assert len(s2) == 1
+        assert s2[0]["summary"] == "Summary for repo 2"
+
+    def test_file_contents_isolated_by_repo_id(self, store):
+        """File contents are scoped by repo_id."""
+        store.insert_file_content("src/a.ts", "content for repo 1", repo_id=1)
+        store.insert_file_content("src/a.ts", "content for repo 2", repo_id=2)
+        assert store.get_file_content("src/a.ts", repo_id=1) == "content for repo 1"
+        assert store.get_file_content("src/a.ts", repo_id=2) == "content for repo 2"
+
+    def test_directory_summaries_isolated_by_repo_id(self, store):
+        """Directory summaries are scoped by repo_id."""
+        store.insert_directory_summary("src", "Dir summary repo 1", repo_id=1)
+        store.insert_directory_summary("src", "Dir summary repo 2", repo_id=2)
+        s1 = store.get_directory_summary("src", repo_id=1)
+        s2 = store.get_directory_summary("src", repo_id=2)
+        assert s1["summary"] == "Dir summary repo 1"
+        assert s2["summary"] == "Dir summary repo 2"
+
+    def test_queries_isolated_by_repo_id(self, store):
+        """Queries are scoped by repo_id."""
+        store.insert_query("prompt for repo 1", repo_id=1)
+        store.insert_query("prompt for repo 2", repo_id=2)
+        q1 = store.list_queries(repo_id=1)
+        q2 = store.list_queries(repo_id=2)
+        assert len(q1) == 1
+        assert q1[0]["prompt"] == "prompt for repo 1"
+        assert len(q2) == 1
+        assert q2[0]["prompt"] == "prompt for repo 2"
+
+    def test_clear_index_data_scoped_by_repo_id(self, store):
+        """clear_index_data only affects the specified repo_id."""
+        store.insert_chunks([
+            Chunk(None, "a.ts", "fn1", "function", 1, 5, "code1", 4),
+        ], repo_id=1)
+        store.insert_chunks([
+            Chunk(None, "a.ts", "fn2", "function", 1, 5, "code2", 4),
+        ], repo_id=2)
+        store.clear_index_data(repo_id=1)
+        # repo_id=1 data should be gone
+        assert store.get_chunks_by_file("a.ts", repo_id=1) == []
+        # repo_id=2 data should remain
+        c2 = store.get_chunks_by_file("a.ts", repo_id=2)
+        assert len(c2) == 1
+
+    def test_scip_symbols_isolated_by_repo_id(self, store):
+        """SCIP symbol lookup is scoped by repo_id."""
+        sid1 = store.insert_scip_symbol("npm . pkg 1.0 `foo`.", repo_id=1)
+        sid2 = store.insert_scip_symbol("npm . pkg 1.0 `foo`.", repo_id=2)
+        # Same symbol string, different repos → different IDs
+        assert sid1 != sid2
+        assert store.get_scip_symbol_id("npm . pkg 1.0 `foo`.", repo_id=1) == sid1
+        assert store.get_scip_symbol_id("npm . pkg 1.0 `foo`.", repo_id=2) == sid2
+
+    def test_count_scoped_by_repo_id(self, store):
+        """count() filters by repo_id for data tables."""
+        store.insert_chunks([
+            Chunk(None, "a.ts", "fn1", "function", 1, 5, "code1", 4),
+            Chunk(None, "b.ts", "fn2", "function", 1, 5, "code2", 4),
+        ], repo_id=1)
+        store.insert_chunks([
+            Chunk(None, "c.ts", "fn3", "function", 1, 5, "code3", 4),
+        ], repo_id=2)
+        assert store.count("chunks", repo_id=1) == 2
+        assert store.count("chunks", repo_id=2) == 1

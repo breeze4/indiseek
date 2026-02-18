@@ -189,6 +189,35 @@ class SqliteStore:
             )
         self._conn.commit()
 
+        # Migrate: fix unique constraints to be composite (col + repo_id)
+        # instead of just col. Required for multi-repo data isolation.
+        self._migrate_composite_unique("file_contents", "file_path", [
+            "file_path TEXT NOT NULL",
+            "content TEXT NOT NULL",
+            "line_count INTEGER NOT NULL",
+            "repo_id INTEGER DEFAULT 1",
+        ], "UNIQUE(file_path, repo_id)")
+        self._migrate_composite_unique("directory_summaries", "dir_path", [
+            "id INTEGER PRIMARY KEY",
+            "dir_path TEXT NOT NULL",
+            "summary TEXT NOT NULL",
+            "repo_id INTEGER DEFAULT 1",
+        ], "UNIQUE(dir_path, repo_id)")
+        self._migrate_composite_unique("file_summaries", "file_path", [
+            "id INTEGER PRIMARY KEY",
+            "file_path TEXT NOT NULL",
+            "summary TEXT NOT NULL",
+            "language TEXT",
+            "line_count INTEGER",
+            "repo_id INTEGER DEFAULT 1",
+        ], "UNIQUE(file_path, repo_id)")
+        self._migrate_composite_unique("scip_symbols", "symbol", [
+            "id INTEGER PRIMARY KEY",
+            "symbol TEXT NOT NULL",
+            "documentation TEXT",
+            "repo_id INTEGER DEFAULT 1",
+        ], "UNIQUE(symbol, repo_id)")
+
         # Auto-create legacy repo row if data exists but repos is empty
         self._ensure_legacy_repo()
 
@@ -199,6 +228,35 @@ class SqliteStore:
         if column not in columns:
             self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
             self._conn.commit()
+
+    def _migrate_composite_unique(
+        self, table: str, unique_col: str, column_defs: list[str], constraint: str,
+    ) -> None:
+        """Rebuild a table to change its UNIQUE constraint to a composite one.
+
+        Only runs if the table's current DDL lacks the composite constraint.
+        Preserves all existing data via copy.
+        """
+        cur = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return
+        ddl = row[0]
+        # Skip if constraint already present
+        if constraint.replace(" ", "") in ddl.replace(" ", ""):
+            return
+        tmp = f"_{table}_migrate"
+        cols = ", ".join(c.split()[0] for c in column_defs)
+        self._conn.executescript(f"""
+            CREATE TABLE {tmp} ({', '.join(column_defs)}, {constraint});
+            INSERT INTO {tmp} ({cols}) SELECT {cols} FROM {table};
+            DROP TABLE {table};
+            ALTER TABLE {tmp} RENAME TO {table};
+            CREATE INDEX IF NOT EXISTS idx_{table}_repo_id ON {table}(repo_id);
+        """)
+        self._conn.commit()
 
     def _ensure_legacy_repo(self) -> None:
         """Auto-create legacy repo row (id=1) if data exists but repos table is empty."""

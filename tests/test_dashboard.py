@@ -173,6 +173,40 @@ class TestRepoScopedEndpoints:
         assert resp.status_code == 200
 
 
+class TestUnscopedEndpointAliases:
+    """Verify that endpoints without repo_id default to repo_id=1."""
+
+    def test_stats_without_repo_id(self, client, store):
+        """Stats endpoint works without repo_id, defaulting to repo_id=1."""
+        store.insert_chunks([Chunk(
+            id=None, file_path="a.ts", symbol_name="foo",
+            chunk_type="function", content="code",
+            start_line=1, end_line=5,
+        )], repo_id=1)
+        resp = client.get("/stats")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["sqlite"]["chunks"] >= 1
+
+    def test_search_without_repo_id(self, client):
+        """Search endpoint works without repo_id."""
+        resp = client.get("/search?q=hello")
+        assert resp.status_code == 200
+
+    def test_queries_without_repo_id(self, client, store):
+        """Queries endpoint works without repo_id, defaulting to repo_id=1."""
+        store.insert_query("test prompt", repo_id=1)
+        resp = client.get("/queries")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) >= 1
+
+    def test_files_without_repo_id(self, client):
+        """Files endpoint works without repo_id."""
+        resp = client.get("/files/src/main.ts")
+        assert resp.status_code == 200
+
+
 class TestFreshnessCheck:
     """Test the freshness check endpoint."""
 

@@ -31,22 +31,21 @@ ruff check src/
 bash scripts/generate_scip.sh /path/to/repo
 ```
 
-## Index (after Vite is cloned and .env configured)
+## Index (after repo is cloned and .env configured)
 ```
-# Tree-sitter only
+# Legacy single-repo (uses REPO_PATH from .env, repo_id=1)
 python scripts/index.py
-
-# Tree-sitter + SCIP cross-references
-python scripts/index.py --scip-path /path/to/repo/index.scip
-
-# Tree-sitter + SCIP + semantic embeddings (requires GEMINI_API_KEY in .env)
-python scripts/index.py --scip-path /path/to/repo/index.scip --embed
-
-# Tree-sitter + SCIP + embeddings + file summaries (requires GEMINI_API_KEY in .env)
-python scripts/index.py --scip-path /path/to/repo/index.scip --embed --summarize
-
-# Full pipeline: all indexing steps including BM25 lexical index
 python scripts/index.py --scip-path /path/to/repo/index.scip --embed --summarize --lexical
+
+# Multi-repo: index a specific repo by name or ID
+python scripts/index.py --repo vite --embed --summarize --lexical
+python scripts/index.py --repo 2 --embed --summarize --lexical
+
+# Dry run: show what each stage would do without executing
+python scripts/index.py --repo vite --embed --summarize --lexical --dry-run
+
+# Filter to a subdirectory
+python scripts/index.py --repo vite --filter packages/vite/src --embed
 ```
 
 ## Indexing Pipeline Details
@@ -94,6 +93,30 @@ cd frontend && npm run build
 uvicorn indiseek.api.server:app  # dashboard at http://localhost:8000/dashboard
 ```
 
+## Multi-Repo Management
+
+Repos can be managed via the dashboard UI at `/repos` or via the API:
+
+```bash
+# List repos
+curl http://localhost:8000/dashboard/api/repos
+
+# Add a repo (clones in background)
+curl -X POST http://localhost:8000/dashboard/api/repos \
+    -H "Content-Type: application/json" \
+    -d '{"name": "myrepo", "url": "https://github.com/org/myrepo.git"}'
+
+# Check freshness (compares indexed SHA to remote HEAD)
+curl -X POST http://localhost:8000/dashboard/api/repos/2/check
+
+# Sync repo (git pull + incremental re-index of changed files)
+curl -X POST http://localhost:8000/dashboard/api/repos/2/sync
+```
+
+All dashboard API endpoints accept `?repo_id=N` (GET) or `"repo_id": N` in body (POST), defaulting to 1.
+
+`REPO_PATH` in `.env` is only needed for legacy single-repo usage (repo_id=1). When using the dashboard to manage repos, clones go to `DATA_DIR/repos/<id>/`.
+
 ## Serve
 ```
 uvicorn indiseek.api.server:app
@@ -108,6 +131,11 @@ curl http://localhost:8000/health
 curl -X POST http://localhost:8000/query \
     -H "Content-Type: application/json" \
     -d '{"prompt": "How does Vite HMR propagation work when a CSS file changes?"}'
+
+# Query a specific repo
+curl -X POST http://localhost:8000/query \
+    -H "Content-Type: application/json" \
+    -d '{"prompt": "How does auth work?", "repo_id": 2}'
 ```
 
 ## Agent Tools (after indexing)
@@ -147,10 +175,13 @@ format_results(results, "HMR CSS propagation")
 - src/indiseek/ — main package
 - src/indiseek/agent/ — agent loop (Gemini tool-calling) and LLM provider
 - src/indiseek/tools/ — agent tools (read_map, search_code, resolve_symbol, read_file)
-- src/indiseek/api/ — FastAPI server (POST /query, GET /health, dashboard API)
+- src/indiseek/api/ — FastAPI server (POST /query, GET /health, dashboard API, repo management)
 - src/indiseek/indexer/pipeline.py — extracted pipeline step functions with progress callbacks
+- src/indiseek/storage/sqlite_store.py — SQLite storage layer (all data tables, repo CRUD)
+- src/indiseek/git_utils.py — git operations (clone, fetch, pull, SHA comparison)
+- src/indiseek/config.py — environment config + per-repo path helpers
 - frontend/ — React SPA dashboard (Vite + Tailwind + TanStack Query)
-- scripts/ — CLI entry points
+- scripts/ — CLI entry points (index.py with --repo support)
 - tests/ — pytest tests
 - docs/ — spec and plans
 - proto/ — SCIP protobuf schema

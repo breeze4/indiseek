@@ -92,7 +92,7 @@ Validate that combining structural (Tree-sitter + SCIP), semantic (embeddings), 
 - "How does X actually work?" questions are hard to answer by grepping
 - Real-world complexity without being enormous
 
-Hardcoded for MVP. No repo management, no multi-repo support, no incremental indexing.
+Originally hardcoded for MVP. Multi-repo support and incremental sync were added post-MVP (see Multi-Repo Architecture below).
 
 ### Stack
 
@@ -178,9 +178,73 @@ The loop:
 
 ### What We're NOT Building in MVP
 
-- No repo cloning/management (manually clone Vite, point the indexer at it)
-- No incremental indexing (full re-index every time)
+- ~~No repo cloning/management~~ **DONE** — dashboard UI for add/clone/delete/sync repos
+- ~~No incremental indexing~~ **DONE** — incremental sync via git diff + selective re-index
 - No auth, no multi-user, no rate limiting
-- No caching of query results
+- ~~No caching of query results~~ **DONE** — fuzzy query cache with reindex invalidation
 - No MCP server integration (just HTTP for now)
 - No persistent conversation/follow-up queries
+
+---
+
+## Multi-Repo Architecture
+
+All data tables are partitioned by `repo_id INTEGER DEFAULT 1`. Legacy single-repo data (pre-multi-repo) lives under `repo_id=1` with no migration required — the DEFAULT clause handles it.
+
+### Storage Layout
+
+**SQLite (shared database):**
+- `repos` table: id, name, url, local_path, created_at, last_indexed_at, indexed_commit_sha, current_commit_sha, commits_behind, status
+- All data tables (`symbols`, `chunks`, `file_summaries`, `file_contents`, `directory_summaries`, `scip_symbols`, `scip_occurrences`, `scip_relationships`, `queries`) have `repo_id` column with `DEFAULT 1`
+- Composite UNIQUE constraints: `file_contents(file_path, repo_id)`, `directory_summaries(dir_path, repo_id)`, `file_summaries(file_path, repo_id)`, `scip_symbols(symbol, repo_id)`
+
+**Per-repo storage backends:**
+- LanceDB tables: `chunks` (legacy repo_id=1), `chunks_{repo_id}` (new repos)
+- Tantivy index directories: `DATA_DIR/tantivy/` (legacy), `DATA_DIR/tantivy_{repo_id}/` (new repos)
+- Git clones: `REPO_PATH` (legacy repo_id=1), `DATA_DIR/repos/{repo_id}/` (new repos)
+
+Config helpers: `get_repo_path(repo_id)`, `get_lancedb_table_name(repo_id)`, `get_tantivy_path(repo_id)`.
+
+### API
+
+All existing dashboard endpoints accept `?repo_id=N` query parameter (default 1). All POST endpoints accept `repo_id` in the request body.
+
+Repo management endpoints:
+- `GET /repos` — list all repos
+- `POST /repos` — clone a new repo (background task)
+- `GET /repos/{id}` — repo details
+- `DELETE /repos/{id}` — remove repo
+- `POST /repos/{id}/check` — freshness check (git fetch + compare SHAs)
+- `POST /repos/{id}/sync` — incremental sync (git pull + re-index changed files)
+
+### CLI
+
+`scripts/index.py --repo <name-or-id>` indexes a specific repo. Without `--repo`, falls back to `REPO_PATH` with `repo_id=1`.
+
+### Frontend
+
+React context (`RepoContext`) holds `currentRepoId`, persisted in localStorage. Repo selector dropdown in nav sidebar (only visible when 2+ repos exist). All pages pass `currentRepoId` to API calls. Repos management page at `/repos`.
+
+---
+
+## Post-MVP Roadmap
+
+Detailed plan: `docs/plans/roadmap.md`
+
+### Tier 1 — Must-Have
+- ~~**Repo management:** Multi-repo support with UI for add/remove/status. All tables partitioned by `repo_id`.~~ **DONE** — see Multi-Repo Architecture above.
+- **Partial updates:** ~~Git-diff-driven incremental re-indexing. Commit SHA freshness tracking.~~ **Freshness check and incremental sync implemented** (see `/repos/{id}/check` and `/repos/{id}/sync`). Remaining: Change detection via GitHub Actions workflow (first), API polling (fallback), GitHub App webhooks (later at scale). Scheduled refresh on configurable interval.
+- **Provider-neutral LLM:** Anthropic and OpenAI alongside Gemini. Abstract provider protocol. Separate embedding provider config. Anthropic first, OpenAI second, Bedrock deferred.
+- **Stable tool API:** Formal documentation, consistent error handling, versioned schemas for the four core tools.
+- **Evidence trail everywhere:** Richer evidence steps (timestamps, durations, inline code), expandable UI with syntax highlighting, clickable file references.
+
+### Tier 2 — Wedge Multipliers
+- **Log/metric index view:** Emit sites as first-class entities. Separate query path with deeper reasoning for observability questions.
+- **Slackbot:** Slack bot via Bolt for Python. Forces API cleanliness and drives adoption.
+- **Usage analytics:** Queries/day, latency, cache hit rate, freshness, tool usage. All from SQLite.
+
+### Tier 3 — Nice-to-Have
+- Diagrams, walkthrough pages, rich browsing UI
+- Reranking, personalization, saved searches
+- More languages/indexers (Python, Go, Java, Rust)
+- Codebase evolution history — change-by-change tracking over time
