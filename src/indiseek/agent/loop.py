@@ -28,8 +28,8 @@ from indiseek.tools.search_code import (
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 12
-SYNTHESIS_PHASE = 10  # iteration index where we force text-only (0-based)
+MAX_ITERATIONS = 20
+SYNTHESIS_PHASE = 18  # iteration index where we force text-only (0-based)
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are a codebase research agent. Your job is to answer questions about a codebase \
@@ -94,8 +94,8 @@ If asked "How is the dev server created?", a good first turn might be:
 
 ## Budget
 You have {max_iterations} iterations. Each iteration is one round of tool calls. \
-Plan to use at most 7-8 iterations for research, then synthesize your answer. \
-If you're past iteration 8, stop researching and write your answer with what you have.
+Plan to use at most 12-14 iterations for research, then synthesize your answer. \
+If you're past iteration 14, stop researching and write your answer with what you have.
 
 Be thorough but efficient. Don't read entire files when a targeted search suffices. \
 Don't repeat a search you've already done. Synthesize your findings into a clear, \
@@ -362,9 +362,9 @@ class AgentLoop:
                 "is more accurate than searching for symbol names. Try it now."
             )
         
-        if iteration == 8:
+        if iteration == 14:
             hints.append(
-                "You are at iteration 8/12. Review your collected evidence. "
+                "You are at iteration 14/20. Review your collected evidence. "
                 "If you have enough to answer, synthesize now. Otherwise, focus "
                 "on the single most critical piece of information remaining."
             )

@@ -751,3 +751,24 @@ _Session duration: 9m 39s — 2026-02-17 15:58:27_
 - The Phase 8 progress notes explicitly deferred the `file_contents` composite key fix to Phase 15. This phase also discovered that `file_summaries`, `directory_summaries`, and `scip_symbols` had the same issue — all fixed together.
 - The migration is idempotent — if the composite constraint already exists in the DDL, the migration is skipped.
 - `test_repos.py` grew from 48 to 57 tests (48 existing + 10 isolation - 1 shared fixture). `test_dashboard.py` grew from 24 to 28 tests.
+
+_Session duration: 14m 28s — 2026-02-17 16:12:55_
+
+---
+
+## Agent Loop Tier 1 — Step 1: Increase Iteration Budget
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+
+### Files Modified
+- `src/indiseek/agent/loop.py` — MAX_ITERATIONS 12→20, SYNTHESIS_PHASE 10→18, budget guidance 7-8→12-14, reflection hint trigger iteration 8→14, hint string 8/12→14/20
+- `tests/test_agent.py` — test_max_iterations assertion 12→20, test_system_prompt_includes_repo_map assertion "12 iterations"→"20 iterations"
+- `docs/plans/agent-loop-tier1.md` — marked Step 1 verification items complete
+
+### Test Results
+- 45/45 tests in test_agent.py passing
+- `ruff check src/` — all checks passed
+
+### Notes
+- Straightforward constant and string replacements. No logic changes.

@@ -517,7 +517,7 @@ class TestAgentLoop:
 
         result = agent.run("Loop forever?")
         assert "maximum iterations" in result.answer
-        assert len(result.evidence) == 12  # MAX_ITERATIONS
+        assert len(result.evidence) == 20  # MAX_ITERATIONS
 
     def test_tool_error_captured(self, store, repo_dir):
         """Tool exceptions are caught and recorded as evidence."""
@@ -595,7 +595,7 @@ class TestAgentLoop:
         agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
         prompt = agent._build_system_prompt()
         assert "Main entry point" in prompt
-        assert "12 iterations" in prompt
+        assert "20 iterations" in prompt
 
 
 # ── FastAPI server tests ──
