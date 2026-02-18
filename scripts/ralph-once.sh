@@ -51,24 +51,23 @@ claude --permission-mode acceptEdits \
   --allowedTools "Bash(sort:*)" \
   --allowedTools "Bash(sed:*)" \
   -p "$(cat <<'EOF'
-@docs/plans/todo.md
+@docs/plans/agent-loop-tier1.md
 @.ralph/progress.md
 
-You are an autonomous implementation agent working through docs/plans/todo.md.
+You are an autonomous implementation agent working through docs/plans/agent-loop-tier1.md.
 
 1. Read .ralph/progress.md to understand what has already been done.
-2. Read docs/plans/todo.md. Find the NEXT INCOMPLETE PHASE — first ## Phase with unchecked [ ] items in its Success Criteria.
-3. Implement that phase completely:
+2. Read docs/plans/agent-loop-tier1.md. Find the NEXT INCOMPLETE STEP — first ### Step with unchecked verification items.
+3. Implement that step completely:
    - All listed changes, in order.
    - Write tests. Run them. Fix failures.
-   - Run every automated verification in Success Criteria.
-   - Mark each passing check [x] in docs/plans/todo.md.
-4. Update CLAUDE.md if the end-of-phase checklist requires it.
-5. Append a progress entry to .ralph/progress.md: phase name, files created/modified, test results, verification results, issues, git commit SHA.
-6. Git commit with a descriptive message. Init git if no repo exists (phase 1 only).
+   - Run every verification check listed in the step (pytest, ruff).
+   - Mark each passing check [x] in docs/plans/agent-loop-tier1.md.
+4. Append a progress entry to .ralph/progress.md: step name, files created/modified, test results, verification results, issues, git commit SHA.
+5. Git commit with a descriptive message.
 
-CRITICAL: Only work on ONE PHASE per session.
-If ALL phases have Status [x] on every Success Criteria item, output the exact text RALPH_DONE
+CRITICAL: Only work on ONE STEP per session.
+If ALL steps have [x] on every checklist item, output the exact text RALPH_DONE
 EOF
 )"
 

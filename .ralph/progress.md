@@ -839,3 +839,5 @@ _Session duration: 4m 23s — 2026-02-17 19:35:18_
 - The critique prompt is injected as a user message into the conversation at iteration 15 (0-based), right before the generate_content call. This gives the model 3 more research iterations (15, 16, 17) before forced synthesis at 18.
 - Tools are NOT disabled during the critique phase — the whole point is for the model to verify its claims via tool calls.
 - The critique only fires if tool_call_count >= 5, skipping it for simple queries that resolved quickly.
+
+_Session duration: 3m 32s — 2026-02-17 19:38:50_
