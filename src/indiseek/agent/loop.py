@@ -43,32 +43,16 @@ Use this to orient yourself — you do NOT need to call read_map() for the full 
 
 ## Tool usage
 
-### search_code(query, mode?)
-Full-text and semantic search over code chunks. The `query` parameter is a plain search \
-string — natural language or identifier names. It does NOT support field filters, boolean \
-operators, or any special syntax. To narrow results to a specific file, use read_file instead.
+Detailed tool docs are in the tool declarations. Use this table to pick the right tool:
 
-Good queries: `"HMR CSS propagation"`, `"createServer"`, `"module graph invalidation"`
-Bad queries:  `"HMR path:src/server.ts"`, `"foo AND bar"`, `"createServer file:index.ts"`
-
-Modes: "hybrid" (default, best), "semantic" (meaning-based), "lexical" (exact keywords).
-
-### resolve_symbol(symbol_name, action)
-Precise cross-reference lookup using SCIP index data. Use this to navigate the call graph \
-— it is much more accurate than searching for a symbol name.
-- "definition": where the symbol is defined
-- "references": all usage sites
-- "callers": which functions call this symbol
-- "callees": which functions this symbol calls
-
-### read_file(path, start_line?, end_line?)
-Read source code with line numbers. Default cap is 200 lines. Use start_line/end_line \
-for large files. This is the ONLY way to scope to a specific file — search_code cannot \
-filter by file path.
-
-### read_map(path?)
-Drill into a subdirectory for file summaries. The full tree is already above — only \
-call this if you need detail on a specific directory.
+### When to use which tool
+| I have... | Use |
+|-----------|-----|
+| An exact function/variable name | search_code(query, mode="lexical") |
+| A concept or "how does X work" question | search_code(query, mode="semantic") |
+| A general first exploration | search_code(query) — hybrid is default |
+| A symbol name from search results | resolve_symbol(name, "definition") + resolve_symbol(name, "callers") |
+| A file path I want to read | read_file(path) |
 
 ## Strategy
 1. **Plan first**: In your first turn, state your research plan. What are you looking \
@@ -119,10 +103,17 @@ TOOL_DECLARATIONS = [
     ),
     types.FunctionDeclaration(
         name="search_code",
-        description="Hybrid semantic+lexical code search. Returns relevant code chunks "
-        "ranked by relevance. The query is a plain search string (natural language or "
-        "identifiers). Does NOT support field filters like 'path:', boolean operators, "
-        "or special syntax. To scope results to a specific file, use read_file instead.",
+        description=(
+            "Search code by meaning or keywords. Returns top 10 code chunks ranked by relevance.\n"
+            "\n"
+            "Modes:\n"
+            '- "lexical": Exact identifiers (updateStyle, handleHMRUpdate, ERR_NOT_FOUND)\n'
+            '- "semantic": Concepts ("how CSS changes are applied in the browser")\n'
+            '- "hybrid" (default): Combines both. Best when unsure.\n'
+            "\n"
+            "For symbol cross-references (who calls X, where is X defined), use resolve_symbol instead.\n"
+            "For reading a specific file you already know, use read_file instead."
+        ),
         parameters_json_schema={
             "type": "object",
             "properties": {
@@ -142,8 +133,20 @@ TOOL_DECLARATIONS = [
     ),
     types.FunctionDeclaration(
         name="resolve_symbol",
-        description="Look up symbol definition, references, callers, or callees using "
-        "SCIP cross-references and tree-sitter data.",
+        description=(
+            "Navigate the code's call graph using precise cross-reference data. More accurate "
+            "than searching for symbol names — use this as your primary navigation tool after "
+            "initial discovery.\n"
+            "\n"
+            "Actions:\n"
+            '- "definition": Where is this symbol defined? Start here.\n'
+            '- "references": Where is this symbol used across the codebase?\n'
+            '- "callers": What functions call this symbol? Understand usage patterns.\n'
+            '- "callees": What does this function call? Trace execution flow downward.\n'
+            "\n"
+            "Tip: After search_code finds a symbol, call resolve_symbol('name', 'definition') "
+            "AND resolve_symbol('name', 'callers') together to get the full picture in one turn."
+        ),
         parameters_json_schema={
             "type": "object",
             "properties": {
@@ -162,9 +165,15 @@ TOOL_DECLARATIONS = [
     ),
     types.FunctionDeclaration(
         name="read_file",
-        description="Read source code from the repository with line numbers. "
-        "Output is capped at 500 lines by default. Use start_line and end_line "
-        "to read a specific range of a large file.",
+        description=(
+            "Read source code with line numbers. Default cap is 200 lines. "
+            "Use start_line/end_line for large files.\n"
+            "\n"
+            "Use this when you know the file path and need to examine the actual implementation.\n"
+            "This is the ONLY way to scope to a specific file — search_code cannot filter by path.\n"
+            "Reading the implementation after finding a symbol is almost always more valuable "
+            "than running another search."
+        ),
         parameters_json_schema={
             "type": "object",
             "properties": {

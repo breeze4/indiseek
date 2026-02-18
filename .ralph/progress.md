@@ -772,3 +772,24 @@ _Session duration: 14m 28s — 2026-02-17 16:12:55_
 
 ### Notes
 - Straightforward constant and string replacements. No logic changes.
+
+_Session duration: 1m 34s — 2026-02-17 19:28:17_
+
+---
+
+## Agent Loop Tier 1 — Step 2: Rewrite Tool Descriptions
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+
+### Files Modified
+- `src/indiseek/agent/loop.py` — replaced `description` strings for search_code (modes + redirect guidance), resolve_symbol (actions + tip for parallel calls), and read_file (scope emphasis + value-over-search guidance) in TOOL_DECLARATIONS. Replaced `## Tool usage` section in SYSTEM_PROMPT_TEMPLATE with a compact decision table pointing to tool declarations for details.
+- `docs/plans/agent-loop-tier1.md` — marked Step 2 verification items complete
+
+### Test Results
+- 45/45 tests in test_agent.py passing
+- `ruff check src/` — all checks passed
+
+### Notes
+- No test changes needed — existing tests verify structure (tool count, required fields, prompt template existence) which are unchanged.
+- The system prompt is now shorter: per-tool docs removed (redundant with tool declarations), replaced by a 5-row lookup table.
