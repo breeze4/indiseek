@@ -706,3 +706,107 @@ class TestDataclasses:
             ],
         )
         assert len(result.evidence) == 1
+
+
+# ── Exploration tracking tests ──
+
+
+class TestExplorationTracking:
+    def test_discovered_symbols_tracked(self, store, repo_dir):
+        """search_code results populate _discovered_symbols."""
+        mock_searcher = MagicMock()
+        mock_searcher.search.return_value = [
+            HybridResult(
+                chunk_id=1, file_path="src/main.ts", symbol_name="createServer",
+                chunk_type="function", content="function createServer() {}", score=0.9,
+                match_type="lexical",
+            ),
+            HybridResult(
+                chunk_id=2, file_path="src/main.ts", symbol_name="startServer",
+                chunk_type="function", content="function startServer() {}", score=0.8,
+                match_type="lexical",
+            ),
+            HybridResult(
+                chunk_id=3, file_path="src/main.ts", symbol_name=None,
+                chunk_type="module", content="// module chunk", score=0.5,
+                match_type="lexical",
+            ),
+        ]
+        agent = AgentLoop(store, repo_dir, mock_searcher, api_key="fake")
+
+        fn_resp = _make_fn_call_response("search_code", {"query": "server"})
+        text_resp = _make_text_response("Done.")
+        agent._client = MagicMock()
+        agent._client.models.generate_content.side_effect = [fn_resp, text_resp]
+
+        agent.run("Find server code")
+        assert "createServer" in agent._discovered_symbols
+        assert "startServer" in agent._discovered_symbols
+        assert None not in agent._discovered_symbols  # None symbol_name skipped
+
+    def test_resolved_symbols_tracked(self, store, repo_dir, searcher):
+        """resolve_symbol calls populate _symbols_resolved."""
+        store.insert_symbols([
+            Symbol(
+                id=None, file_path="src/main.ts", name="hello",
+                kind="function", start_line=1, start_col=0,
+                end_line=3, end_col=1, signature="function hello()",
+            ),
+        ])
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+
+        fn_resp = _make_fn_call_response(
+            "resolve_symbol", {"symbol_name": "hello", "action": "definition"}
+        )
+        text_resp = _make_text_response("Done.")
+        agent._client = MagicMock()
+        agent._client.models.generate_content.side_effect = [fn_resp, text_resp]
+
+        agent.run("Find hello")
+        assert ("hello", "definition") in agent._symbols_resolved
+
+    def test_gaps_surface_unresolved(self, store, repo_dir, searcher):
+        """Gaps method returns unresolved symbols."""
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        agent._discovered_symbols = {"foo", "bar", "baz"}
+        agent._symbols_resolved = {("foo", "definition")}
+
+        gaps = agent._exploration_gaps()
+        assert "bar" in gaps
+        assert "baz" in gaps
+        assert "foo" not in gaps
+
+    def test_gaps_empty_when_all_resolved(self, store, repo_dir, searcher):
+        """Gaps method returns empty string when all discovered symbols resolved."""
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+        agent._discovered_symbols = {"foo", "bar"}
+        agent._symbols_resolved = {("foo", "definition"), ("bar", "callers")}
+
+        assert agent._exploration_gaps() == ""
+
+    def test_question_reiteration_in_responses(self, store, repo_dir, searcher):
+        """Tool responses include [QUESTION: ...] prefix."""
+        store.insert_file_summaries([
+            ("src/main.ts", "Main entry", "ts", 3),
+        ])
+        agent = AgentLoop(store, repo_dir, searcher, api_key="fake")
+
+        fn_resp = _make_fn_call_response("read_map", {})
+        text_resp = _make_text_response("Done.")
+
+        agent._client = MagicMock()
+        agent._client.models.generate_content.side_effect = [fn_resp, text_resp]
+
+        # Capture function response parts
+        captured_results = []
+        orig_from_fn = types.Part.from_function_response
+
+        def _capture_fn_response(**kwargs):
+            captured_results.append(kwargs.get("response", {}).get("result", ""))
+            return orig_from_fn(**kwargs)
+
+        with patch.object(types.Part, "from_function_response", side_effect=_capture_fn_response):
+            agent.run("How does HMR work?")
+
+        assert len(captured_results) == 1
+        assert "[QUESTION: How does HMR work?]" in captured_results[0]

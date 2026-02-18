@@ -270,6 +270,10 @@ class AgentLoop:
         self._query_cache = QueryCache()
         self._resolve_cache: dict[tuple[str, str], str] = {}
         self._resolve_symbol_used: bool = False
+        self._files_read: set[str] = set()
+        self._symbols_resolved: set[tuple[str, str]] = set()
+        self._discovered_symbols: set[str] = set()
+        self._original_prompt: str = ""
 
     def _build_system_prompt(self) -> str:
         """Build system prompt with the top-level repo map baked in."""
@@ -298,10 +302,14 @@ class AgentLoop:
                 results = self._searcher.search(query, mode=mode, limit=10)
                 result = format_results(results, query)
                 self._query_cache.put(query, result)
+                for r in results:
+                    if r.symbol_name:
+                        self._discovered_symbols.add(r.symbol_name)
         elif name == "resolve_symbol":
             self._resolve_symbol_used = True
             symbol_name = args["symbol_name"]
             action = args["action"]
+            self._symbols_resolved.add((symbol_name, action))
             cache_key = (symbol_name, action)
             if cache_key in self._resolve_cache:
                 logger.debug("  resolve cache hit: %s/%s", symbol_name, action)
@@ -340,6 +348,8 @@ class AgentLoop:
                 else:
                     self._file_cache[file_path] = content
                     result = format_file_content(content, file_path, start_line, end_line)
+
+            self._files_read.add(file_path)
 
             # Add implicit symbol definitions found in this range
             if content is not None:
@@ -383,6 +393,15 @@ class AgentLoop:
             
         return "\n[HINT: " + " ".join(hints) + "]"
 
+    def _exploration_gaps(self) -> str:
+        """Surface symbols found but not yet investigated."""
+        resolved_names = {s[0] for s in self._symbols_resolved}
+        unresolved = self._discovered_symbols - resolved_names
+        if not unresolved:
+            return ""
+        names = sorted(unresolved)[:5]
+        return f"\n[Symbols found but not yet resolved: {', '.join(names)}]"
+
     def run(
         self,
         prompt: str,
@@ -397,6 +416,10 @@ class AgentLoop:
         self._query_cache.clear()
         self._resolve_cache.clear()
         self._resolve_symbol_used = False
+        self._files_read.clear()
+        self._symbols_resolved.clear()
+        self._discovered_symbols.clear()
+        self._original_prompt = prompt
 
         logger.debug("Building system prompt (includes read_map)...")
         t0 = time.perf_counter()
@@ -504,6 +527,10 @@ class AgentLoop:
                             results = self._searcher.search(query, mode=mode, limit=10)
                             result = format_results(results, query)
                             self._query_cache.put(query, result)
+                            # Track discovered symbols
+                            for r in results:
+                                if r.symbol_name:
+                                    self._discovered_symbols.add(r.symbol_name)
                             summary = f"Search: {query} -> {summarize_results(results)}"
                             # Contextual suggestion: nudge toward resolve_symbol
                             if not self._resolve_symbol_used and results:
@@ -542,6 +569,9 @@ class AgentLoop:
                     logger.debug("  truncating result from %d to 15000 chars", len(result))
                     result = result[:15000] + "\n... (truncated)"
 
+                # Prepend question reiteration to keep context
+                result = f"[QUESTION: {self._original_prompt}]\n" + result
+
                 # Inject iteration budget into the result
                 if remaining <= 2:
                     result += (
@@ -565,6 +595,11 @@ class AgentLoop:
                 hint = self._maybe_inject_tool_hint(iteration)
                 if hint:
                     result += hint
+
+                # Surface exploration gaps
+                gaps = self._exploration_gaps()
+                if gaps:
+                    result += gaps
 
                 evidence.append(
                     EvidenceStep(

@@ -793,3 +793,26 @@ _Session duration: 1m 34s — 2026-02-17 19:28:17_
 ### Notes
 - No test changes needed — existing tests verify structure (tool count, required fields, prompt template existence) which are unchanged.
 - The system prompt is now shorter: per-tool docs removed (redundant with tool declarations), replaced by a 5-row lookup table.
+
+_Session duration: 2m 38s — 2026-02-17 19:30:55_
+
+---
+
+## Agent Loop Tier 1 — Step 3: Question Reiteration + Exploration Tracking
+
+**Status**: COMPLETE
+**Date**: 2026-02-17
+
+### Files Modified
+- `src/indiseek/agent/loop.py` — added `_files_read`, `_symbols_resolved`, `_discovered_symbols`, `_original_prompt` instance state. Added resets in `run()`. Added symbol discovery tracking in search_code (both inline and `_execute_tool` paths). Added `_symbols_resolved` tracking in resolve_symbol. Added `_files_read` tracking in read_file. Added `_exploration_gaps()` method. Injected `[QUESTION: ...]` prefix and gap surfacing into tool response results.
+- `tests/test_agent.py` — added `TestExplorationTracking` class with 5 tests: discovered symbols tracked, resolved symbols tracked, gaps surface unresolved, gaps empty when all resolved, question reiteration in responses.
+- `docs/plans/agent-loop-tier1.md` — marked Step 3 verification items complete.
+
+### Test Results
+- 50/50 tests in test_agent.py passing (45 existing + 5 new)
+- `ruff check src/` — all checks passed
+
+### Notes
+- search_code symbol discovery is tracked in both the inline `run()` block (which handles search_code specially for summary extraction) and the `_execute_tool` method (defensive, in case it's called directly).
+- `_files_read` is tracked in `_execute_tool` for read_file, even though it's not currently used by `_exploration_gaps()` — it's available for future use.
+- Question reiteration prepends `[QUESTION: <prompt>]` to every tool response, keeping the model grounded on the original question throughout long loops.
