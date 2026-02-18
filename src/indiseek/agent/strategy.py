@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -354,14 +353,6 @@ def build_tool_registry(
 # Strategy Registry
 # ---------------------------------------------------------------------------
 
-# Routing heuristic patterns that suggest a complex (multi-agent) query
-_COMPLEX_PATTERNS = re.compile(
-    r"\b(how|why|explain|describe|walk me through|end.to.end|flow|architecture|"
-    r"pipeline|lifecycle|process|interaction|relationship)\b",
-    re.IGNORECASE,
-)
-
-
 class StrategyRegistry:
     """Registry of query strategies with factory functions."""
 
@@ -381,12 +372,8 @@ class StrategyRegistry:
         return sorted(self._factories.keys())
 
     def auto_select(self, prompt: str) -> str:
-        """Heuristic: pick the best strategy for a prompt."""
-        if len(prompt.split()) > 15:
-            return "multi"
-        if _COMPLEX_PATTERNS.search(prompt):
-            return "multi"
-        return "single"
+        """Pick the default strategy for a prompt."""
+        return "classic"
 
 
 # Module-level singleton
