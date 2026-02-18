@@ -262,6 +262,8 @@ class SqliteStore:
         """Auto-create legacy repo row (id=1) if data exists but repos table is empty."""
         cur = self._conn.execute("SELECT COUNT(*) FROM repos")
         if cur.fetchone()[0] > 0:
+            # Backfill: if legacy repo exists but indexed_commit_sha is null and data exists
+            self._backfill_legacy_sha()
             return
         # Check if there's any indexed data
         cur = self._conn.execute("SELECT COUNT(*) FROM symbols")
@@ -274,12 +276,54 @@ class SqliteStore:
         name = Path(repo_path).name if repo_path else "legacy"
         local_path = repo_path or "."
         now = datetime.now(timezone.utc).isoformat()
+        # If repo exists on disk, grab the HEAD SHA so /check knows it's been indexed
+        head_sha = None
+        if repo_path and Path(repo_path).is_dir():
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    capture_output=True, text=True, cwd=repo_path,
+                )
+                if result.returncode == 0:
+                    head_sha = result.stdout.strip()
+            except Exception:
+                pass
         self._conn.execute(
-            """INSERT INTO repos (id, name, url, local_path, created_at, status)
-               VALUES (1, ?, NULL, ?, ?, 'active')""",
-            (name, local_path, now),
+            """INSERT INTO repos (id, name, url, local_path, created_at, status,
+                                  indexed_commit_sha, last_indexed_at)
+               VALUES (1, ?, NULL, ?, ?, 'active', ?, ?)""",
+            (name, local_path, now, head_sha, now if head_sha else None),
         )
         self._conn.commit()
+
+    def _backfill_legacy_sha(self) -> None:
+        """Backfill indexed_commit_sha for legacy repo if it has data but no SHA."""
+        cur = self._conn.execute(
+            "SELECT local_path, indexed_commit_sha FROM repos WHERE id = 1"
+        )
+        row = cur.fetchone()
+        if not row or row[1] is not None:
+            return
+        local_path = row[0]
+        if not local_path or not Path(local_path).is_dir():
+            return
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, cwd=local_path,
+            )
+            if result.returncode == 0:
+                sha = result.stdout.strip()
+                now = datetime.now(timezone.utc).isoformat()
+                self._conn.execute(
+                    "UPDATE repos SET indexed_commit_sha = ?, last_indexed_at = ? WHERE id = 1",
+                    (sha, now),
+                )
+                self._conn.commit()
+        except Exception:
+            pass
 
     # ── Repo operations ──
 
