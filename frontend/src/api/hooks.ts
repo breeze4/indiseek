@@ -9,6 +9,7 @@ import {
   fetchTasks,
   runOperation,
   runQuery,
+  fetchStrategies,
   fetchQueryHistory,
   fetchQueryDetail,
   createTaskStream,
@@ -77,11 +78,19 @@ export function useRunOperation() {
 export function useRunQuery() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ prompt, force, repoId }: { prompt: string; force?: boolean; repoId?: number }) =>
-      runQuery(prompt, force, repoId),
+    mutationFn: ({ prompt, force, repoId, mode }: { prompt: string; force?: boolean; repoId?: number; mode?: string }) =>
+      runQuery(prompt, force, repoId, mode),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
     },
+  })
+}
+
+export function useStrategies() {
+  return useQuery({
+    queryKey: ['strategies'],
+    queryFn: fetchStrategies,
+    staleTime: Infinity,
   })
 }
 

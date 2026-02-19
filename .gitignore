@@ -42,5 +42,8 @@ htmlcov/
 frontend/node_modules/
 frontend/dist/
 
+# Sample outputs
+samples/
+
 # Claude Code
 .claude/

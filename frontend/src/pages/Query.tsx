@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { useRunQuery, useTaskStream, useQueryHistory, useQueryDetail } from '../api/hooks.ts'
+import { useRunQuery, useTaskStream, useQueryHistory, useQueryDetail, useStrategies } from '../api/hooks.ts'
 import { useCurrentRepo } from '../contexts/RepoContext.tsx'
 import type { StreamEvent } from '../api/hooks.ts'
 import type { QueryResult, QueryEvidence, QueryCachedResponse } from '../api/client.ts'
@@ -120,6 +120,7 @@ function CopyButton({ text }: { text: string }) {
 export default function Query() {
   const { currentRepoId } = useCurrentRepo()
   const [prompt, setPrompt] = useState('')
+  const [strategy, setStrategy] = useState('auto')
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
   const [result, setResult] = useState<QueryResult | null>(null)
   const [selectedQueryId, setSelectedQueryId] = useState<number>(0)
@@ -129,6 +130,7 @@ export default function Query() {
   const queryClient = useQueryClient()
   const { data: history } = useQueryHistory(currentRepoId)
   const { data: historyDetail } = useQueryDetail(selectedQueryId)
+  const { data: strategies } = useStrategies()
 
   const isRunning = activeTaskId !== null && !done
 
@@ -151,7 +153,7 @@ export default function Query() {
     setActiveTaskId(null)
     setSelectedQueryId(0)
     setIsCachedResult(false)
-    runQuery.mutate({ prompt: prompt.trim(), force, repoId: currentRepoId }, {
+    runQuery.mutate({ prompt: prompt.trim(), force, repoId: currentRepoId, mode: strategy }, {
       onSuccess: (data) => {
         if ('cached' in data && data.cached) {
           const cached = data as QueryCachedResponse
@@ -258,6 +260,17 @@ export default function Query() {
             >
               {isRunning ? 'Running...' : 'Submit'}
             </button>
+            <select
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value)}
+              disabled={isRunning}
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              <option value="auto">Auto</option>
+              {strategies?.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
             {isRunning && (
               <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
             )}

@@ -187,11 +187,14 @@ export const runOperation = (name: string, body?: Record<string, unknown>) =>
     body: JSON.stringify(body ?? {}),
   })
 
-export const runQuery = (prompt: string, force?: boolean, repoId: number = 1) =>
+export const fetchStrategies = () =>
+  apiFetch<{ strategies: string[] }>('/strategies').then((r) => r.strategies)
+
+export const runQuery = (prompt: string, force?: boolean, repoId: number = 1, mode: string = 'auto') =>
   apiFetch<RunResponse | QueryCachedResponse>('/run/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, repo_id: repoId, ...(force ? { force: true } : {}) }),
+    body: JSON.stringify({ prompt, repo_id: repoId, mode, ...(force ? { force: true } : {}) }),
   })
 
 export const fetchQueryHistory = (repoId: number = 1) =>
