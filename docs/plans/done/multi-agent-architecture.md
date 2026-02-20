@@ -358,13 +358,7 @@ File: `src/indiseek/api/dashboard.py`
 
 ### Step 8: Eval and Tuning
 
-Run the CSS HMR eval with both single-agent and multi-agent to measure improvement.
-
-- [ ] Run eval with single-agent (baseline)
-- [ ] Run eval with multi-agent
-- [ ] Compare against reference answer
-- [ ] Tune researcher budget, planner prompt, synthesizer model
-- [ ] Add 2-3 more eval questions for broader coverage
+Eval and tuning is tracked separately in `multi-agent-evals.md`.
 
 ## Cost Analysis
 

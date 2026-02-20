@@ -25,7 +25,7 @@ In `src/indiseek/api/dashboard.py` (`_run` inside `sync_repo`):
 **Verify:**
 - [x] `pytest` passes
 - [x] `ruff check src/` clean
-- [ ] Manual: sync a repo with known changes, confirm embeddings and summaries update
+- [x] Manual: sync a repo with known changes, confirm embeddings and summaries update
 
 ---
 
@@ -62,7 +62,7 @@ In `src/indiseek/api/dashboard.py` (`check_repo_freshness`):
 **Verify:**
 - [x] `pytest` passes
 - [x] `ruff check src/` clean
-- [ ] Manual: check a never-indexed repo, confirm response has `status: not_indexed`
+- [x] Manual: check a never-indexed repo, confirm response has `status: not_indexed`
 
 ---
 
@@ -142,7 +142,7 @@ In frontend:
 **Verify:**
 - [x] `pytest` passes (404 tests)
 - [x] `ruff check src/` clean
-- [ ] Manual: run summarize-dirs for a repo, confirm summaries appear in `/tree` response and FileTree UI
+- [x] Manual: run summarize-dirs for a repo, confirm summaries appear in `/tree` response and FileTree UI
 
 ---
 
@@ -174,7 +174,7 @@ In frontend:
 - [x] `pytest` passes (404 tests)
 - [x] `ruff check src/` clean
 - [x] TypeScript type check clean
-- [ ] Manual: index a repo without `--summarize`, confirm summary-status shows all missing, run summarize-missing, confirm counts update
+- [x] Manual: index a repo without `--summarize`, confirm summary-status shows all missing, run summarize-missing, confirm counts update
 
 ---
 
