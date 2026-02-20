@@ -18,7 +18,10 @@ pip install -e .
 
 ## Test
 ```
-pytest
+pytest                          # full suite (~22s)
+pytest -n auto --dist loadfile  # parallel (~14s, requires pytest-xdist)
+pytest tests/test_tools.py      # single file
+pytest -k "TestReadMap"         # single class
 ```
 
 ## Lint

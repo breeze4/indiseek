@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from indiseek.storage.sqlite_store import Chunk, SqliteStore, Symbol
+from indiseek.storage.sqlite_store import Chunk, Symbol
 from indiseek.tools.read_file import read_file
 from indiseek.tools.read_map import read_map
 from indiseek.tools.resolve_symbol import (
@@ -25,14 +25,6 @@ from indiseek.tools.search_code import (
 
 
 # ── Fixtures ──
-
-
-@pytest.fixture
-def store(tmp_path):
-    """Create a fresh SqliteStore with schema initialized."""
-    db = SqliteStore(tmp_path / "test.db")
-    db.init_db()
-    return db
 
 
 @pytest.fixture

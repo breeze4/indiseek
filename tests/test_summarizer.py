@@ -4,22 +4,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
 
-from indiseek.storage.sqlite_store import SqliteStore
-
-
-# ── Fixtures ──
-
-
-@pytest.fixture
-def store(tmp_path: Path) -> SqliteStore:
-    s = SqliteStore(tmp_path / "test.db")
-    s.init_db()
-    return s
-
+if TYPE_CHECKING:
+    from indiseek.storage.sqlite_store import SqliteStore
 
 def _make_mock_provider(summary: str = "Does something useful.") -> MagicMock:
     provider = MagicMock()

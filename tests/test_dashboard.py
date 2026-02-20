@@ -11,26 +11,10 @@ from fastapi.testclient import TestClient
 from indiseek.storage.sqlite_store import Chunk, SqliteStore
 
 
-@pytest.fixture
-def db_path(tmp_path):
-    """Return a path for a test database."""
-    return tmp_path / "test.db"
-
-
-@pytest.fixture
-def store(db_path):
-    """Create a fresh SqliteStore with schema initialized."""
-    db = SqliteStore(db_path)
-    db.init_db()
-    return db
-
-
 def _make_store_factory(db_path):
     """Create a factory that returns a fresh store connection per call (thread-safe)."""
     def factory():
-        s = SqliteStore(db_path)
-        s.init_db()
-        return s
+        return SqliteStore(db_path)
     return factory
 
 

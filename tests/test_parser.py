@@ -4,18 +4,14 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from indiseek.indexer.parser import TypeScriptParser
-from indiseek.storage.sqlite_store import SqliteStore
 
-
-@pytest.fixture
-def store(tmp_path: Path) -> SqliteStore:
-    s = SqliteStore(tmp_path / "test.db")
-    s.init_db()
-    return s
+if TYPE_CHECKING:
+    from indiseek.storage.sqlite_store import SqliteStore
 
 
 @pytest.fixture

@@ -3,20 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
-from indiseek.storage.sqlite_store import Chunk, SqliteStore
+from indiseek.storage.sqlite_store import Chunk
+
+if TYPE_CHECKING:
+    from indiseek.storage.sqlite_store import SqliteStore
 
 
 # ── Fixtures ──
-
-
-@pytest.fixture
-def store(tmp_path: Path) -> SqliteStore:
-    s = SqliteStore(tmp_path / "test.db")
-    s.init_db()
-    return s
 
 
 @pytest.fixture

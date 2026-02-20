@@ -18,17 +18,6 @@ from indiseek.storage.sqlite_store import SqliteStore
 from indiseek.tools.search_code import QueryCache, compute_query_similarity
 
 
-# ── Fixtures ──
-
-
-@pytest.fixture
-def store(tmp_path):
-    """Create a fresh SqliteStore with schema initialized."""
-    db = SqliteStore(tmp_path / "test.db")
-    db.init_db()
-    return db
-
-
 # ── compute_query_similarity tests ──
 
 
@@ -289,11 +278,10 @@ class TestDashboardCacheIntegration:
     """
 
     @pytest.fixture(autouse=True)
-    def setup(self, tmp_path):
+    def setup(self, db_path):
         """Patch config paths and reset task manager for each test."""
-        self.db_path = tmp_path / "test.db"
+        self.db_path = db_path
         self.store = SqliteStore(self.db_path)
-        self.store.init_db()
 
         # Patch config so dashboard creates a store pointing at our temp DB
         self._patches = [

@@ -3,22 +3,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from indiseek.storage.sqlite_store import Chunk, SqliteStore
+from indiseek.storage.sqlite_store import Chunk
 from indiseek.storage.vector_store import VectorStore
+
+if TYPE_CHECKING:
+    from indiseek.storage.sqlite_store import SqliteStore
 
 
 # ── Fixtures ──
-
-
-@pytest.fixture
-def store(tmp_path: Path) -> SqliteStore:
-    s = SqliteStore(tmp_path / "test.db")
-    s.init_db()
-    return s
 
 
 @pytest.fixture
@@ -212,8 +209,10 @@ class TestEmbedder:
         assert len(results) == 2
         assert all(r.file_path in ("hmr.ts", "css.ts") for r in results)
 
+    @patch("indiseek.indexer.embedder.time.sleep")
     def test_embed_batch_error_retries(
         self,
+        _mock_sleep: MagicMock,
         store: SqliteStore,
         tmp_path: Path,
     ) -> None:

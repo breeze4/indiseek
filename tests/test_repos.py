@@ -9,14 +9,6 @@ import pytest
 from indiseek.storage.sqlite_store import Chunk, SqliteStore, Symbol
 
 
-@pytest.fixture
-def store(tmp_path):
-    """Create a fresh SqliteStore with schema initialized."""
-    db = SqliteStore(tmp_path / "test.db")
-    db.init_db()
-    return db
-
-
 class TestReposTable:
     """Verify the repos table is created with correct schema."""
 

@@ -23,71 +23,8 @@ from indiseek.agent.multi import (
     _is_complex_query,
 )
 from indiseek.agent.strategy import EvidenceStep, QueryResult, ToolRegistry, build_tool_registry
-from indiseek.storage.sqlite_store import SqliteStore
 from indiseek.tools.search_code import CodeSearcher, QueryCache
-
-
-# ── Fixtures ──
-
-
-@pytest.fixture
-def store(tmp_path):
-    """Create a fresh SqliteStore with schema initialized."""
-    db = SqliteStore(tmp_path / "test.db")
-    db.init_db()
-    return db
-
-
-@pytest.fixture
-def searcher():
-    """Create a CodeSearcher with no backends (for mocking)."""
-    return CodeSearcher()
-
-
-# ── Helpers ──
-
-
-def _make_text_response(text: str):
-    """Create a mock Gemini response with text content."""
-    part = MagicMock()
-    part.text = text
-    part.function_call = None
-
-    content = MagicMock()
-    content.role = "model"
-    content.parts = [part]
-
-    candidate = MagicMock()
-    candidate.content = content
-
-    response = MagicMock()
-    response.candidates = [candidate]
-    response.function_calls = None
-    response.text = text
-    return response
-
-
-def _make_fn_call_response(name: str, args: dict):
-    """Create a mock Gemini response with a function call."""
-    fn_call = MagicMock()
-    fn_call.name = name
-    fn_call.args = args
-
-    fn_part = MagicMock()
-    fn_part.function_call = fn_call
-
-    content = MagicMock()
-    content.role = "model"
-    content.parts = [fn_part]
-
-    candidate = MagicMock()
-    candidate.content = content
-
-    response = MagicMock()
-    response.candidates = [candidate]
-    response.function_calls = [fn_call]
-    response.text = None
-    return response
+from tests.helpers import _make_fn_call_response, _make_text_response
 
 
 # ── Data structure tests ──

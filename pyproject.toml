@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "pytest-xdist",
     "ruff",
 ]
 
@@ -29,6 +30,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: tests with deliberate delays or heavy I/O",
+]
 
 [tool.ruff]
 src = ["src"]
