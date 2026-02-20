@@ -19,6 +19,8 @@ import {
   deleteRepo,
   checkRepoFreshness,
   syncRepo,
+  fetchSummaryStatus,
+  runSummarizeMissing,
   type TaskInfo,
   type QueryCachedResponse,
   type RunResponse,
@@ -161,6 +163,25 @@ export function useSyncRepo() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['repos'] })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    },
+  })
+}
+
+export function useSummaryStatus(repoId: number) {
+  return useQuery({
+    queryKey: ['summaryStatus', repoId],
+    queryFn: () => fetchSummaryStatus(repoId),
+    enabled: repoId > 0,
+  })
+}
+
+export function useRunSummarizeMissing() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (repoId: number) => runSummarizeMissing(repoId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['summaryStatus'] })
     },
   })
 }

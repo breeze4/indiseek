@@ -20,6 +20,7 @@ export interface Stats {
     scip_symbols?: number
     scip_occurrences?: number
     file_summaries?: number
+    directory_summaries?: number
     error?: string
   }
   lancedb: {
@@ -146,10 +147,21 @@ export interface Repo {
 }
 
 export interface FreshnessCheck {
+  status: 'current' | 'stale' | 'not_indexed'
   indexed_sha: string | null
   current_sha: string
   commits_behind: number
   changed_files: string[]
+}
+
+export interface SummaryStatus {
+  files_total: number
+  files_summarized: number
+  files_missing: number
+  files_missing_paths: string[]
+  dirs_total: number
+  dirs_summarized: number
+  dirs_missing: number
 }
 
 export interface QueryHistoryDetail extends QueryHistoryItem {
@@ -227,6 +239,16 @@ export const checkRepoFreshness = (repoId: number) =>
 export const syncRepo = (repoId: number) =>
   apiFetch<RunResponse>(`/repos/${repoId}/sync`, {
     method: 'POST',
+  })
+
+export const fetchSummaryStatus = (repoId: number) =>
+  apiFetch<SummaryStatus>(`/repos/${repoId}/summary-status`)
+
+export const runSummarizeMissing = (repoId: number) =>
+  apiFetch<RunResponse>('/run/summarize-missing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repo_id: repoId }),
   })
 
 export function createTaskStream(taskId: string): EventSource {

@@ -291,12 +291,16 @@ class TestDashboardCacheIntegration:
         for p in self._patches:
             p.start()
 
-        # Reset the task manager between tests
-        from indiseek.api.dashboard import _task_manager
-        _task_manager._tasks.clear()
+        # Fresh task manager per test to avoid cross-test thread pool races
+        from indiseek.api import dashboard
+        from indiseek.api.task_manager import TaskManager
+
+        self._old_tm = dashboard._task_manager
+        dashboard._task_manager = TaskManager()
 
         yield
 
+        dashboard._task_manager = self._old_tm
         for p in self._patches:
             p.stop()
 

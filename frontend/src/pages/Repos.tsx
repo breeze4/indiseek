@@ -6,6 +6,8 @@ import {
   useDeleteRepo,
   useCheckFreshness,
   useSyncRepo,
+  useSummaryStatus,
+  useRunSummarizeMissing,
   useTaskStream,
 } from '../api/hooks.ts'
 import { useCurrentRepo } from '../contexts/RepoContext.tsx'
@@ -23,11 +25,15 @@ function StatusBadge({ status }: { status: string }) {
 
 function FreshnessBadge({ repo, freshness }: { repo: Repo; freshness?: FreshnessCheck | null }) {
   if (freshness) {
-    if (freshness.commits_behind === 0) {
+    if (freshness.status === 'not_indexed') {
+      return <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">not indexed</span>
+    }
+    if (freshness.status === 'current') {
       return <span className="text-xs px-1.5 py-0.5 rounded bg-green-900 text-green-300">up to date</span>
     }
+    // stale
     const label = freshness.commits_behind === -1
-      ? 'unknown commits behind'
+      ? 'stale (unknown commits)'
       : `${freshness.commits_behind} behind`
     return <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-300">{label}</span>
   }
@@ -40,12 +46,65 @@ function FreshnessBadge({ repo, freshness }: { repo: Repo; freshness?: Freshness
   return null
 }
 
+function SummaryStatusBar({ repoId, disabled, onTask }: {
+  repoId: number
+  disabled: boolean
+  onTask: (taskId: string) => void
+}) {
+  const { data: status } = useSummaryStatus(repoId)
+  const summarizeMut = useRunSummarizeMissing()
+
+  if (!status || status.files_total === 0) return null
+
+  const filePct = status.files_total > 0
+    ? Math.round((status.files_summarized / status.files_total) * 100)
+    : 0
+  const dirPct = status.dirs_total > 0
+    ? Math.round((status.dirs_summarized / status.dirs_total) * 100)
+    : 0
+  const hasMissing = status.files_missing > 0 || status.dirs_missing > 0
+
+  function handleRun() {
+    summarizeMut.mutate(repoId, {
+      onSuccess: (data) => {
+        if ('task_id' in data) onTask(data.task_id)
+      },
+    })
+  }
+
+  return (
+    <div className="mb-3 bg-gray-950 border border-gray-800 rounded p-2">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-gray-400">Summaries</span>
+        {hasMissing && (
+          <button
+            onClick={handleRun}
+            disabled={disabled || summarizeMut.isPending}
+            className={`text-xs px-2 py-0.5 rounded ${
+              disabled || summarizeMut.isPending
+                ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                : 'bg-purple-700 hover:bg-purple-600 text-white'
+            }`}
+          >
+            {summarizeMut.isPending ? 'Starting...' : 'Generate Missing'}
+          </button>
+        )}
+      </div>
+      <div className="flex gap-4 text-xs text-gray-500">
+        <span>Files: {status.files_summarized}/{status.files_total} ({filePct}%)</span>
+        <span>Dirs: {status.dirs_summarized}/{status.dirs_total} ({dirPct}%)</span>
+      </div>
+    </div>
+  )
+}
+
 function RepoCard({
   repo,
   onDelete,
   onCheck,
   onSync,
   onView,
+  onTask,
   checking,
   syncing,
   freshness,
@@ -56,6 +115,7 @@ function RepoCard({
   onCheck: (id: number) => void
   onSync: (id: number) => void
   onView: (id: number) => void
+  onTask: (taskId: string) => void
   checking: boolean
   syncing: boolean
   freshness?: FreshnessCheck | null
@@ -87,6 +147,8 @@ function RepoCard({
           <span>Indexed: {new Date(repo.last_indexed_at).toLocaleDateString()}</span>
         )}
       </div>
+
+      <SummaryStatusBar repoId={repo.id} disabled={disabled} onTask={onTask} />
 
       {freshness && freshness.changed_files.length > 0 && (
         <div className="mb-3 bg-gray-950 border border-gray-800 rounded p-2 max-h-32 overflow-y-auto">
@@ -329,6 +391,7 @@ export default function Repos() {
             onCheck={handleCheck}
             onSync={handleSync}
             onView={handleView}
+            onTask={setActiveTaskId}
             checking={checkingId === repo.id}
             syncing={syncingId === repo.id}
             freshness={freshnessResults[repo.id]}

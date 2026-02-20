@@ -171,6 +171,7 @@ export default function Overview() {
               <Stat label="SCIP symbols" value={sq.scip_symbols ?? 0} />
               <Stat label="SCIP occurrences" value={sq.scip_occurrences ?? 0} />
               <Stat label="File summaries" value={summaries} />
+              <Stat label="Dir summaries" value={sq.directory_summaries ?? 0} />
             </>
           )}
         </StatCard>

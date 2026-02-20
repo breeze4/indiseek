@@ -26,12 +26,13 @@ class TaskManager:
         self._subscribers: dict[str, list[queue.Queue]] = {}
         self._lock = threading.Lock()
 
-    def submit(self, name: str, fn: Callable, **kwargs) -> str:
+    def submit(self, name: str, fn: Callable, task_id: str | None = None, **kwargs) -> str:
         """Submit a task for background execution.
 
         Args:
             name: Human-readable task name (e.g. "treesitter").
             fn: Callable to execute.
+            task_id: Optional pre-generated task ID. If None, one is generated.
             **kwargs: Arguments passed to fn.
 
         Returns:
@@ -45,7 +46,8 @@ class TaskManager:
                 if t["status"] == "running":
                     raise RuntimeError("A task is already running")
 
-            task_id = str(uuid.uuid4())
+            if task_id is None:
+                task_id = str(uuid.uuid4())
             self._tasks[task_id] = {
                 "id": task_id,
                 "name": name,
@@ -60,18 +62,20 @@ class TaskManager:
             try:
                 result = fn(**kwargs)
                 with self._lock:
-                    if task_id not in self._tasks:
+                    task = self._tasks.get(task_id)
+                    if task is None:
                         return
-                    self._tasks[task_id]["status"] = "completed"
-                    self._tasks[task_id]["result"] = result
+                    task["status"] = "completed"
+                    task["result"] = result
                 self._broadcast(task_id, {"type": "done", "result": result})
             except Exception as e:
                 logger.exception("Task %s (%s) failed", task_id, name)
                 with self._lock:
-                    if task_id not in self._tasks:
+                    task = self._tasks.get(task_id)
+                    if task is None:
                         return
-                    self._tasks[task_id]["status"] = "failed"
-                    self._tasks[task_id]["error"] = traceback.format_exc()
+                    task["status"] = "failed"
+                    task["error"] = traceback.format_exc()
                 self._broadcast(task_id, {"type": "error", "error": str(e)})
 
         self._executor.submit(_run)

@@ -7,6 +7,7 @@ import logging
 import queue
 import subprocess
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -199,6 +200,11 @@ class CreateRepoRequest(BaseModel):
     shallow: bool = True
 
 
+class RunRequest(BaseModel):
+    path_filter: str | None = None
+    repo_id: int = 1
+
+
 @router.get("/repos")
 def list_repos():
     """List all repositories."""
@@ -310,17 +316,21 @@ def check_repo_freshness(repo_id: int):
     indexed_sha = repo.get("indexed_commit_sha")
     commits_behind = 0
     changed_files: list[str] = []
+    status = "current"
 
-    if indexed_sha and indexed_sha != current_sha:
+    if not indexed_sha:
+        # Never indexed
+        current_sha = get_head_sha(repo_path)
+        commits_behind = -1
+        status = "not_indexed"
+    elif indexed_sha != current_sha:
+        status = "stale"
         try:
             commits_behind = count_commits_between(repo_path, indexed_sha, current_sha)
             changed_files = get_changed_files(repo_path, indexed_sha, current_sha)
         except GitError:
             # If the indexed SHA doesn't exist (e.g. shallow clone), count is unknown
             commits_behind = -1
-    elif not indexed_sha:
-        # Never indexed — get current HEAD
-        current_sha = get_head_sha(repo_path)
 
     store.update_repo(
         repo_id,
@@ -329,6 +339,7 @@ def check_repo_freshness(repo_id: int):
     )
 
     return {
+        "status": status,
         "indexed_sha": indexed_sha,
         "current_sha": current_sha,
         "commits_behind": commits_behind,
@@ -353,6 +364,7 @@ def sync_repo(repo_id: int):
 
     repo_path = Path(repo["local_path"])
     indexed_sha = repo.get("indexed_commit_sha")
+    task_id = str(uuid.uuid4())
 
     def _run():
         from indiseek.git_utils import get_changed_files, get_head_sha, pull_remote
@@ -391,44 +403,109 @@ def sync_repo(repo_id: int):
         progress({"step": "sync", "status": "indexing", "changed_files": len(changed)})
 
         # Step 3: Re-index changed files (or full if no indexed_sha)
+        PARSEABLE_EXTS = {".ts", ".tsx", ".js", ".jsx"}
         if changed:
-            # Delete old data for changed files and re-parse them
+            # Split into modified (still exists on disk) vs all changed
+            modified = [fp for fp in changed if (repo_path / fp).exists()]
+
+            # Clear old index data for all changed files (handles deletes too)
             for fp in changed:
                 s.clear_index_data_for_prefix(fp, repo_id=repo_id)
-            # Re-run tree-sitter on the changed files
+
+            # Re-run tree-sitter on parseable modified files
             from indiseek.indexer.parser import TypeScriptParser
             ts_parser = TypeScriptParser()
-            for fp in changed:
+            parsed_files: list[str] = []
+            for fp in modified:
                 fpath = repo_path / fp
-                if not fpath.exists() or fpath.suffix not in (".ts", ".tsx"):
-                    continue
+                if fpath.suffix in PARSEABLE_EXTS:
+                    try:
+                        symbols = ts_parser.parse_file(fpath, fp)
+                        chunks = ts_parser.chunk_file(fpath, fp)
+                        if symbols:
+                            s.insert_symbols(symbols, repo_id=repo_id)
+                        if chunks:
+                            s.insert_chunks(chunks, repo_id=repo_id)
+                        parsed_files.append(fp)
+                    except Exception as e:
+                        logger.warning("Failed to re-parse %s: %s", fp, e)
+                        continue
+
+                # Store/update file content for all modified files
                 try:
-                    symbols = ts_parser.parse_file(fpath, fp)
-                    chunks = ts_parser.chunk_file(fpath, fp)
-                    if symbols:
-                        s.insert_symbols(symbols, repo_id=repo_id)
-                    if chunks:
-                        s.insert_chunks(chunks, repo_id=repo_id)
                     content = fpath.read_text(encoding="utf-8", errors="replace")
                     s.insert_file_content(fp, content, repo_id=repo_id)
                 except Exception as e:
-                    logger.warning("Failed to re-parse %s: %s", fp, e)
+                    logger.warning("Failed to read %s: %s", fp, e)
 
-            # Delete rows for deleted files
-            for fp in changed:
-                fpath = repo_path / fp
-                if not fpath.exists():
-                    s.clear_index_data_for_prefix(fp, repo_id=repo_id)
+            # Step 3b: Re-embed chunks for changed files
+            progress({"step": "sync", "status": "embedding"})
+            try:
+                from indiseek.indexer.embedder import Embedder
+                from indiseek.storage.vector_store import VectorStore
+
+                table_name = config.get_lancedb_table_name(repo_id)
+                vs = VectorStore(config.LANCEDB_PATH, dims=config.EMBEDDING_DIMS, table_name=table_name)
+                # Remove stale vectors for changed/deleted file paths
+                vs.delete_by_file_paths(changed)
+                # Re-embed only the changed file chunks (new chunk IDs won't be in LanceDB)
+                embedder = Embedder(s, vs)
+                for fp in parsed_files:
+                    embedder.embed_all_chunks(path_filter=fp, on_progress=progress, repo_id=repo_id)
+            except Exception as e:
+                logger.warning("Failed to re-embed changed files: %s", e)
+
+            # Step 3c: Re-summarize changed files
+            progress({"step": "sync", "status": "summarizing"})
+            try:
+                from indiseek.indexer.summarizer import Summarizer, _detect_language, _count_lines
+
+                # Delete old summaries so they get regenerated
+                s.delete_file_summaries_for_paths(changed, repo_id=repo_id)
+                summarizer = Summarizer(s, delay=0.5, repo_id=repo_id)
+                for fp in changed:
+                    fpath = repo_path / fp
+                    if not fpath.exists():
+                        continue
+                    try:
+                        content = fpath.read_text(encoding="utf-8", errors="replace")
+                        summary = summarizer.summarize_file(fp, content)
+                        language = _detect_language(fp)
+                        line_count = _count_lines(content)
+                        s.insert_file_summary(fp, summary, language, line_count, repo_id=repo_id)
+                    except Exception as e:
+                        logger.warning("Failed to re-summarize %s: %s", fp, e)
+
+                # Update directory summaries for parent directories of changed files
+                parent_dirs: set[str] = set()
+                for fp in changed:
+                    parts = fp.split("/")
+                    for i in range(1, len(parts)):
+                        parent_dirs.add("/".join(parts[:i]))
+                if parent_dirs:
+                    s.delete_directory_summaries_for_paths(list(parent_dirs), repo_id=repo_id)
+            except Exception as e:
+                logger.warning("Failed to re-summarize changed files: %s", e)
         else:
             # Full re-index
             run_treesitter(s, repo_path, on_progress=progress, repo_id=repo_id)
 
-        # Step 4: Rebuild lexical index (always full rebuild)
+        # Step 4: Reload SCIP cross-references if index exists
+        scip_path = repo_path / "index.scip"
+        if scip_path.exists():
+            progress({"step": "sync", "status": "scip"})
+            try:
+                from indiseek.indexer.pipeline import run_scip
+                run_scip(s, scip_path, on_progress=progress, repo_id=repo_id)
+            except Exception as e:
+                logger.warning("Failed to reload SCIP index: %s", e)
+
+        # Step 5: Rebuild lexical index (always full rebuild)
         progress({"step": "sync", "status": "lexical"})
         tantivy_path = config.get_tantivy_path(repo_id)
         run_lexical(s, tantivy_path, on_progress=progress, repo_id=repo_id)
 
-        # Step 5: Update repo metadata
+        # Step 6: Update repo metadata
         now = datetime.now(timezone.utc).isoformat()
         s.update_repo(
             repo_id,
@@ -441,7 +518,7 @@ def sync_repo(repo_id: int):
 
         return {"status": "synced", "sha": new_sha, "changed_files": len(changed)}
 
-    task_id = _task_manager.submit("sync", _run)
+    _task_manager.submit("sync", _run, task_id=task_id)
     return {"task_id": task_id, "name": "sync", "status": "running"}
 
 
@@ -468,6 +545,7 @@ def get_stats(repo_id: int = Query(1)):
                 "scip_symbols": store.count("scip_symbols", repo_id=repo_id),
                 "scip_occurrences": store.count("scip_occurrences", repo_id=repo_id),
                 "file_summaries": store.count("file_summaries", repo_id=repo_id),
+                "directory_summaries": store.count("directory_summaries", repo_id=repo_id),
             }
         except Exception as e:
             logger.warning("Error reading SQLite stats: %s", e)
@@ -495,6 +573,83 @@ def get_stats(repo_id: int = Query(1)):
                 result["tantivy"] = {"available": True, "indexed_docs": 0}
 
     return result
+
+
+# ── Summary Status ──
+
+
+@router.get("/repos/{repo_id}/summary-status")
+def get_summary_status(repo_id: int):
+    """Return summary coverage: total files, summarized, missing, and directory counts."""
+    store = _get_sqlite_store()
+    if not store:
+        raise HTTPException(status_code=500, detail="SQLite store not available")
+
+    all_files = store.get_all_file_paths_from_file_contents(repo_id=repo_id)
+    summarized_files = store.get_all_file_paths_from_summaries(repo_id=repo_id)
+    missing_files = sorted(all_files - summarized_files)
+
+    # Derive expected directories from file paths
+    all_dirs: set[str] = set()
+    for fp in all_files:
+        parts = fp.split("/")
+        for i in range(1, len(parts)):
+            all_dirs.add("/".join(parts[:i]))
+
+    summarized_dirs = store.get_all_directory_paths_from_summaries(repo_id=repo_id)
+    missing_dirs = sorted(all_dirs - summarized_dirs)
+
+    return {
+        "files_total": len(all_files),
+        "files_summarized": len(summarized_files),
+        "files_missing": len(missing_files),
+        "files_missing_paths": missing_files[:100],
+        "dirs_total": len(all_dirs),
+        "dirs_summarized": len(summarized_dirs),
+        "dirs_missing": len(missing_dirs),
+    }
+
+
+@router.post("/run/summarize-missing")
+def run_summarize_missing(req: RunRequest = RunRequest()):
+    """Run file + directory summarization, skipping already-summarized entries."""
+    if _task_manager.has_running_task():
+        raise HTTPException(status_code=409, detail="A task is already running")
+
+    if not config.GEMINI_API_KEY:
+        raise HTTPException(status_code=400, detail="GEMINI_API_KEY not configured")
+
+    from indiseek.indexer.pipeline import run_summarize_dirs
+    from indiseek.indexer.summarizer import Summarizer
+    from indiseek.storage.sqlite_store import SqliteStore
+
+    task_id = str(uuid.uuid4())
+    repo_path = config.get_repo_path(req.repo_id)
+
+    def _run():
+        store = SqliteStore(config.SQLITE_PATH)
+        store.init_db()
+        progress = _make_progress_callback(task_id)
+
+        # Step 1: File summaries (resume-safe — skips existing)
+        summarizer = Summarizer(store, repo_id=req.repo_id)
+        files_done = summarizer.summarize_repo(
+            repo_path, path_filter=req.path_filter, on_progress=progress,
+        )
+
+        # Step 2: Directory summaries (resume-safe — skips existing)
+        dir_result = run_summarize_dirs(
+            store, on_progress=progress, repo_id=req.repo_id,
+        )
+
+        store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
+        return {
+            "files_summarized": files_done,
+            "directories_summarized": dir_result.get("directories_summarized", 0),
+        }
+
+    _task_manager.submit("summarize-missing", _run, task_id=task_id)
+    return {"task_id": task_id, "name": "summarize-missing", "status": "running"}
 
 
 # ── Tree ──
@@ -741,11 +896,6 @@ class QueryRequest(BaseModel):
     mode: str = "auto"  # "auto", "single", "multi"
 
 
-class RunRequest(BaseModel):
-    path_filter: str | None = None
-    repo_id: int = 1
-
-
 class RunScipRequest(BaseModel):
     scip_path: str | None = None
     repo_id: int = 1
@@ -768,6 +918,7 @@ def run_treesitter_op(req: RunRequest = RunRequest()):
     from indiseek.storage.sqlite_store import SqliteStore
 
     repo_path = config.get_repo_path(req.repo_id)
+    task_id = str(uuid.uuid4())
 
     def _run(path_filter=None):
         store = SqliteStore(config.SQLITE_PATH)
@@ -780,7 +931,7 @@ def run_treesitter_op(req: RunRequest = RunRequest()):
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
         return result
 
-    task_id = _task_manager.submit("treesitter", _run, path_filter=req.path_filter)
+    _task_manager.submit("treesitter", _run, task_id=task_id, path_filter=req.path_filter)
     return {"task_id": task_id, "name": "treesitter", "status": "running"}
 
 
@@ -795,6 +946,7 @@ def run_scip_op(req: RunScipRequest = RunScipRequest()):
 
     repo_path = config.get_repo_path(req.repo_id)
     scip_path = Path(req.scip_path) if req.scip_path else repo_path / "index.scip"
+    task_id = str(uuid.uuid4())
 
     def _run():
         store = SqliteStore(config.SQLITE_PATH)
@@ -807,7 +959,7 @@ def run_scip_op(req: RunScipRequest = RunScipRequest()):
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
         return result
 
-    task_id = _task_manager.submit("scip", _run)
+    _task_manager.submit("scip", _run, task_id=task_id)
     return {"task_id": task_id, "name": "scip", "status": "running"}
 
 
@@ -825,6 +977,7 @@ def run_embed_op(req: RunRequest = RunRequest()):
     from indiseek.storage.vector_store import VectorStore
 
     table_name = config.get_lancedb_table_name(req.repo_id)
+    task_id = str(uuid.uuid4())
 
     def _run(path_filter=None):
         store = SqliteStore(config.SQLITE_PATH)
@@ -839,7 +992,7 @@ def run_embed_op(req: RunRequest = RunRequest()):
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
         return result
 
-    task_id = _task_manager.submit("embed", _run, path_filter=req.path_filter)
+    _task_manager.submit("embed", _run, task_id=task_id, path_filter=req.path_filter)
     return {"task_id": task_id, "name": "embed", "status": "running"}
 
 
@@ -856,6 +1009,7 @@ def run_summarize_op(req: RunRequest = RunRequest()):
     from indiseek.storage.sqlite_store import SqliteStore
 
     repo_path = config.get_repo_path(req.repo_id)
+    task_id = str(uuid.uuid4())
 
     def _run(path_filter=None):
         store = SqliteStore(config.SQLITE_PATH)
@@ -868,7 +1022,7 @@ def run_summarize_op(req: RunRequest = RunRequest()):
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
         return result
 
-    task_id = _task_manager.submit("summarize", _run, path_filter=req.path_filter)
+    _task_manager.submit("summarize", _run, task_id=task_id, path_filter=req.path_filter)
     return {"task_id": task_id, "name": "summarize", "status": "running"}
 
 
@@ -884,6 +1038,8 @@ def run_summarize_dirs_op(req: RunRequest = RunRequest()):
     from indiseek.indexer.pipeline import run_summarize_dirs
     from indiseek.storage.sqlite_store import SqliteStore
 
+    task_id = str(uuid.uuid4())
+
     def _run():
         store = SqliteStore(config.SQLITE_PATH)
         store.init_db()
@@ -895,7 +1051,7 @@ def run_summarize_dirs_op(req: RunRequest = RunRequest()):
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
         return result
 
-    task_id = _task_manager.submit("summarize-dirs", _run)
+    _task_manager.submit("summarize-dirs", _run, task_id=task_id)
     return {"task_id": task_id, "name": "summarize-dirs", "status": "running"}
 
 
@@ -909,6 +1065,7 @@ def run_lexical_op(req: RunRequest = RunRequest()):
     from indiseek.storage.sqlite_store import SqliteStore
 
     tantivy_path = config.get_tantivy_path(req.repo_id)
+    task_id = str(uuid.uuid4())
 
     def _run():
         store = SqliteStore(config.SQLITE_PATH)
@@ -921,7 +1078,7 @@ def run_lexical_op(req: RunRequest = RunRequest()):
         store.set_metadata("last_index_at", datetime.now(timezone.utc).isoformat())
         return result
 
-    task_id = _task_manager.submit("lexical", _run)
+    _task_manager.submit("lexical", _run, task_id=task_id)
     return {"task_id": task_id, "name": "lexical", "status": "running"}
 
 
@@ -987,6 +1144,7 @@ def run_query_op(req: QueryRequest):
 
     # Persist query in SQLite
     query_id = store.insert_query(prompt, repo_id=req.repo_id)
+    task_id = str(uuid.uuid4())
 
     def _run():
         import time
@@ -1019,7 +1177,7 @@ def run_query_op(req: QueryRequest):
             qstore.fail_query(query_id, str(exc))
             raise
 
-    task_id = _task_manager.submit("query", _run)
+    _task_manager.submit("query", _run, task_id=task_id)
     return {"task_id": task_id, "name": "query", "status": "running", "query_id": query_id}
 
 

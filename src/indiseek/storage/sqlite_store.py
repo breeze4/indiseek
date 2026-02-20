@@ -718,6 +718,13 @@ class SqliteStore:
         )
         return {row[0] for row in cur.fetchall()}
 
+    def get_all_file_paths_from_file_contents(self, repo_id: int = 1) -> set[str]:
+        """Return distinct file paths stored in file_contents."""
+        cur = self._conn.execute(
+            "SELECT DISTINCT file_path FROM file_contents WHERE repo_id = ?", (repo_id,)
+        )
+        return {row[0] for row in cur.fetchall()}
+
     def get_file_summary(self, file_path: str, repo_id: int = 1) -> dict | None:
         """Look up a single file summary by exact path."""
         cur = self._conn.execute(
@@ -745,6 +752,30 @@ class SqliteStore:
             "chunks_deleted": cur_chunks.rowcount,
             "symbols_deleted": cur_symbols.rowcount,
         }
+
+    def delete_file_summaries_for_paths(self, file_paths: list[str], repo_id: int = 1) -> int:
+        """Delete file summaries for the given exact paths. Returns count deleted."""
+        if not file_paths:
+            return 0
+        placeholders = ",".join("?" for _ in file_paths)
+        cur = self._conn.execute(
+            f"DELETE FROM file_summaries WHERE file_path IN ({placeholders}) AND repo_id = ?",
+            [*file_paths, repo_id],
+        )
+        self._conn.commit()
+        return cur.rowcount
+
+    def delete_directory_summaries_for_paths(self, dir_paths: list[str], repo_id: int = 1) -> int:
+        """Delete directory summaries for the given exact paths. Returns count deleted."""
+        if not dir_paths:
+            return 0
+        placeholders = ",".join("?" for _ in dir_paths)
+        cur = self._conn.execute(
+            f"DELETE FROM directory_summaries WHERE dir_path IN ({placeholders}) AND repo_id = ?",
+            [*dir_paths, repo_id],
+        )
+        self._conn.commit()
+        return cur.rowcount
 
     # ── Metadata ──
 

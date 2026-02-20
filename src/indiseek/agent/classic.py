@@ -329,12 +329,12 @@ class ClassicAgentLoop:
                         result = self._execute_tool(call.name, args)
                         # Build summary based on tool
                         if call.name == "read_file":
-                            summary = f"Read {args['path']}"
+                            summary = f"Read {args.get('path', '?')}"
                             if "start_line" in args:
                                 summary += f" (lines {args['start_line']}-{args.get('end_line', '')})"
                         elif call.name == "resolve_symbol":
                             first_line = result.splitlines()[0] if result else ""
-                            summary = f"Symbol: {args['symbol_name']} ({args['action']}) -> {first_line}"
+                            summary = f"Symbol: {args.get('symbol_name', '?')} ({args.get('action', '?')}) -> {first_line}"
                         elif call.name == "read_map":
                             summary = f"Map: {args.get('path', 'root')}"
                         else:
