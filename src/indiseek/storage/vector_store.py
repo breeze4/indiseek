@@ -70,6 +70,13 @@ class VectorStore:
         except Exception:
             return set()
 
+    def delete_by_file_paths(self, file_paths: list[str]) -> None:
+        """Delete all vectors for the given file paths."""
+        table = self._get_table()
+        for fp in file_paths:
+            escaped = fp.replace("'", "''")
+            table.delete(f"file_path = '{escaped}'")
+
     def _get_table(self) -> lancedb.table.Table:
         if self._table is None:
             self.init_table()
