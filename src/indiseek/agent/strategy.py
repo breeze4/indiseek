@@ -35,6 +35,63 @@ class EvidenceStep:
     summary: str
 
 
+# Pricing per 1M tokens: (input_standard, output_standard, input_batch, output_batch)
+MODEL_PRICING: dict[str, tuple[float, float, float, float]] = {
+    "gemini-3-flash-preview": (0.50, 3.00, 0.25, 1.50),
+    "gemini-3-pro-preview": (2.00, 12.00, 1.00, 6.00),
+    "gemini-3.1-pro-preview": (2.00, 12.00, 1.00, 6.00),
+    "gemini-embedding-001": (0.15, 0.0, 0.075, 0.0),
+}
+
+
+@dataclass
+class UsageStats:
+    """Accumulates token usage across multiple API calls."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    requests: int = 0
+
+    def add(self, prompt: int, completion: int) -> None:
+        """Accumulate from one API call."""
+        self.prompt_tokens += prompt
+        self.completion_tokens += completion
+        self.requests += 1
+
+    def merge(self, other: "UsageStats") -> None:
+        """Merge another UsageStats into this one."""
+        self.prompt_tokens += other.prompt_tokens
+        self.completion_tokens += other.completion_tokens
+        self.requests += other.requests
+
+    def estimated_cost(self, model: str, batch: bool = False) -> float:
+        """Compute estimated cost in USD from token counts and model rates."""
+        rates = MODEL_PRICING.get(model)
+        if not rates:
+            return 0.0
+        if batch:
+            input_rate, output_rate = rates[2], rates[3]
+        else:
+            input_rate, output_rate = rates[0], rates[1]
+        return (
+            self.prompt_tokens * input_rate / 1_000_000
+            + self.completion_tokens * output_rate / 1_000_000
+        )
+
+    def to_dict(self, model: str = "") -> dict[str, Any]:
+        """Serialize for JSON/API responses."""
+        d: dict[str, Any] = {
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.prompt_tokens + self.completion_tokens,
+            "requests": self.requests,
+        }
+        if model:
+            d["estimated_cost"] = round(self.estimated_cost(model), 6)
+            d["model"] = model
+        return d
+
+
 @dataclass
 class QueryResult:
     """Unified result from any query strategy."""

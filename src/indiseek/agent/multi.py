@@ -14,10 +14,12 @@ from google import genai
 from google.genai import types
 
 from indiseek import config
+from indiseek.agent.loop import _extract_usage
 from indiseek.agent.strategy import (
     EvidenceStep,
     QueryResult,
     ToolRegistry,
+    UsageStats,
     build_tool_registry,
     strategy_registry,
 )
@@ -147,10 +149,11 @@ class PlannerAgent:
         self._client = client
         self._model = model
 
-    def plan(self, question: str, repo_map: str) -> ResearchPlan:
+    def plan(self, question: str, repo_map: str) -> tuple[ResearchPlan, UsageStats]:
         """Produce a research plan from a question and repo map."""
         logger.info("Planner: decomposing question")
         t0 = time.perf_counter()
+        usage = UsageStats()
 
         user_prompt = (
             f"## Repository map\n{repo_map}\n\n"
@@ -166,12 +169,13 @@ class PlannerAgent:
                 response_mime_type="application/json",
             ),
         )
+        usage.add(*_extract_usage(response))
 
         elapsed = time.perf_counter() - t0
         raw = response.text or ""
         logger.info("Planner done: %d chars (%.2fs)", len(raw), elapsed)
 
-        return self._parse_plan(question, raw)
+        return self._parse_plan(question, raw), usage
 
     def _parse_plan(self, question: str, raw: str) -> ResearchPlan:
         """Parse the JSON plan, with fallback for malformed responses."""
@@ -276,10 +280,11 @@ class ResearcherAgent:
         self._repo_id = repo_id
         self._tool_registry = tool_registry
 
-    def research(self, sub_question: SubQuestion, repo_map: str) -> EvidenceBundle:
+    def research(self, sub_question: SubQuestion, repo_map: str) -> tuple[EvidenceBundle, UsageStats]:
         """Run the research loop for a single sub-question."""
         logger.info("Researcher: %r", sub_question.question[:80])
         t0 = time.perf_counter()
+        usage = UsageStats()
 
         # Per-run caches (isolated per researcher)
         file_cache: dict[str, str] = {}
@@ -375,6 +380,7 @@ class ResearcherAgent:
                 contents=contents,
                 config=gen_config,
             )
+            usage.add(*_extract_usage(response))
 
             model_content = response.candidates[0].content
             contents.append(model_content)
@@ -431,7 +437,7 @@ class ResearcherAgent:
             elapsed,
         )
 
-        return self._parse_evidence(sub_question.question, findings_text)
+        return self._parse_evidence(sub_question.question, findings_text), usage
 
     def _parse_evidence(self, sub_question: str, text: str) -> EvidenceBundle:
         """Parse researcher output into structured EvidenceBundle."""
@@ -505,10 +511,11 @@ class SynthesizerAgent:
 
     def synthesize(
         self, question: str, evidence_bundles: list[EvidenceBundle]
-    ) -> str:
+    ) -> tuple[str, UsageStats]:
         """Produce a coherent answer from evidence bundles."""
         logger.info("Synthesizer: combining %d evidence bundles", len(evidence_bundles))
         t0 = time.perf_counter()
+        usage = UsageStats()
 
         evidence_text = self._format_evidence(evidence_bundles)
 
@@ -528,17 +535,19 @@ class SynthesizerAgent:
                 system_instruction=SYNTHESIZER_SYSTEM_PROMPT,
             ),
         )
+        usage.add(*_extract_usage(response))
 
         answer = response.text or "(no answer produced)"
         elapsed = time.perf_counter() - t0
         logger.info("Synthesizer done: %d chars (%.2fs)", len(answer), elapsed)
         logger.debug("Synthesizer raw output:\n%s", answer[:3000])
-        return answer
+        return answer, usage
 
-    def revise(self, answer: str, corrections: list[VerificationResult]) -> str:
+    def revise(self, answer: str, corrections: list[VerificationResult]) -> tuple[str, UsageStats]:
         """Revise an answer by applying specific corrections from the verifier."""
         logger.info("Synthesizer: revising answer with %d corrections", len(corrections))
         t0 = time.perf_counter()
+        usage = UsageStats()
 
         corrections_text = "\n".join(
             f"- {c.claim} -> {c.correction}" for c in corrections
@@ -559,12 +568,13 @@ class SynthesizerAgent:
                 system_instruction=SYNTHESIZER_SYSTEM_PROMPT,
             ),
         )
+        usage.add(*_extract_usage(response))
 
         revised = response.text or answer
         elapsed = time.perf_counter() - t0
         logger.info("Synthesizer revision done: %d chars (%.2fs)", len(revised), elapsed)
         logger.debug("Synthesizer revised output:\n%s", revised[:3000])
-        return revised
+        return revised, usage
 
 
 # ---------------------------------------------------------------------------
@@ -630,10 +640,11 @@ class VerifierAgent:
         answer: str,
         verification_hints: list[str],
         repo_map: str,
-    ) -> list[VerificationResult]:
-        """Verify claims in the answer. Returns list of verification results."""
+    ) -> tuple[list[VerificationResult], UsageStats]:
+        """Verify claims in the answer. Returns list of verification results and usage."""
         logger.info("Verifier: checking answer (%d chars)", len(answer))
         t0 = time.perf_counter()
+        usage = UsageStats()
 
         # Per-run caches
         file_cache: dict[str, str] = {}
@@ -714,6 +725,7 @@ class VerifierAgent:
                 contents=contents,
                 config=gen_config,
             )
+            usage.add(*_extract_usage(response))
 
             model_content = response.candidates[0].content
             contents.append(model_content)
@@ -755,7 +767,7 @@ class VerifierAgent:
         )
         logger.debug("Verifier raw output:\n%s", verification_text[:3000])
 
-        return self._parse_verification(verification_text)
+        return self._parse_verification(verification_text), usage
 
     def _parse_verification(self, text: str) -> list[VerificationResult]:
         """Parse verification output into structured results."""
@@ -849,6 +861,7 @@ class MultiAgentOrchestrator:
         """Run the full multi-agent pipeline."""
         logger.info("Multi-agent run started: %r", question[:120])
         run_t0 = time.perf_counter()
+        total_usage = UsageStats()
 
         # Build repo map once — shared by all agents
         repo_map = read_map(self._store, repo_id=self._repo_id)
@@ -858,7 +871,8 @@ class MultiAgentOrchestrator:
             on_progress({"step": "query", "phase": "planner", "summary": "Decomposing question into sub-questions..."})
 
         planner = PlannerAgent(self._client, self._model)
-        plan = planner.plan(question, repo_map)
+        plan, planner_usage = planner.plan(question, repo_map)
+        total_usage.merge(planner_usage)
 
         # Fallback: if planner produces only 1 sub-question, fall back to
         # single-agent loop — multi-agent adds overhead without benefit.
@@ -874,10 +888,18 @@ class MultiAgentOrchestrator:
                 repo_id=self._repo_id,
             )
             single_result = single_agent.run(question, on_progress=on_progress)
+            # Merge single-agent usage with planner usage
+            single_usage_dict = single_result.metadata.get("usage", {})
+            total_usage.prompt_tokens += single_usage_dict.get("prompt_tokens", 0)
+            total_usage.completion_tokens += single_usage_dict.get("completion_tokens", 0)
+            total_usage.requests += single_usage_dict.get("requests", 0)
             return QueryResult(
                 answer=single_result.answer,
                 evidence=single_result.evidence,
-                metadata={"plan": _plan_to_dict(plan)},
+                metadata={
+                    "plan": _plan_to_dict(plan),
+                    "usage": total_usage.to_dict(self._model),
+                },
                 strategy_name=self.name,
             )
 
@@ -903,15 +925,17 @@ class MultiAgentOrchestrator:
             researcher = ResearcherAgent(
                 self._client, self._model, self._store, self._searcher, self._repo_id
             )
-            bundle = researcher.research(sq, repo_map)
+            bundle, researcher_usage = researcher.research(sq, repo_map)
             evidence_bundles.append(bundle)
+            total_usage.merge(researcher_usage)
 
         # Phase 3: Synthesize
         if on_progress:
             on_progress({"step": "query", "phase": "synthesizer", "summary": "Synthesizing answer from evidence..."})
 
         synthesizer = SynthesizerAgent(self._client, self._model)
-        answer = synthesizer.synthesize(question, evidence_bundles)
+        answer, synth_usage = synthesizer.synthesize(question, evidence_bundles)
+        total_usage.merge(synth_usage)
 
         # Phase 4: Verify
         if on_progress:
@@ -925,9 +949,10 @@ class MultiAgentOrchestrator:
         verifier = VerifierAgent(
             self._client, self._model, self._store, self._searcher, self._repo_id
         )
-        verification_results = verifier.verify(
+        verification_results, verifier_usage = verifier.verify(
             answer, verification_hints, repo_map
         )
+        total_usage.merge(verifier_usage)
 
         verified = sum(1 for v in verification_results if v.status == "verified")
         corrected = sum(1 for v in verification_results if v.status == "corrected")
@@ -949,7 +974,8 @@ class MultiAgentOrchestrator:
                     "phase": "synthesizer",
                     "summary": f"Re-synthesizing with {len(corrections)} correction(s)...",
                 })
-            final_answer = synthesizer.revise(answer, corrections)
+            final_answer, revise_usage = synthesizer.revise(answer, corrections)
+            total_usage.merge(revise_usage)
 
         total = time.perf_counter() - run_t0
         logger.info("Multi-agent run complete: %.2fs", total)
@@ -986,6 +1012,7 @@ class MultiAgentOrchestrator:
                     {"claim": v.claim, "status": v.status, "correction": v.correction}
                     for v in verification_results
                 ],
+                "usage": total_usage.to_dict(self._model),
             },
             strategy_name=self.name,
         )

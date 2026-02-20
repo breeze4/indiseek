@@ -178,6 +178,11 @@ class SqliteStore:
         ]:
             self._migrate_add_column(table, "repo_id", "INTEGER DEFAULT 1")
 
+        # Migrate: add cost tracking columns to queries
+        self._migrate_add_column("queries", "prompt_tokens", "INTEGER")
+        self._migrate_add_column("queries", "completion_tokens", "INTEGER")
+        self._migrate_add_column("queries", "estimated_cost", "REAL")
+
         # Create indexes for repo_id columns
         for table in [
             "symbols", "chunks", "file_summaries",
@@ -770,16 +775,21 @@ class SqliteStore:
         return cur.lastrowid  # type: ignore[return-value]
 
     def complete_query(
-        self, query_id: int, answer: str, evidence_json: str, duration_secs: float
+        self, query_id: int, answer: str, evidence_json: str, duration_secs: float,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        estimated_cost: float | None = None,
     ) -> None:
-        """Mark a query as completed with its answer and evidence."""
+        """Mark a query as completed with its answer, evidence, and optional usage."""
         now = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
             """UPDATE queries
                SET answer = ?, evidence = ?, status = 'completed',
-                   completed_at = ?, duration_secs = ?
+                   completed_at = ?, duration_secs = ?,
+                   prompt_tokens = ?, completion_tokens = ?, estimated_cost = ?
                WHERE id = ?""",
-            (answer, evidence_json, now, duration_secs, query_id),
+            (answer, evidence_json, now, duration_secs,
+             prompt_tokens, completion_tokens, estimated_cost, query_id),
         )
         self._conn.commit()
 
@@ -795,7 +805,8 @@ class SqliteStore:
     def list_queries(self, limit: int = 50, repo_id: int = 1) -> list[dict]:
         """List recent queries (without answer/evidence for efficiency)."""
         cur = self._conn.execute(
-            """SELECT id, prompt, status, created_at, duration_secs
+            """SELECT id, prompt, status, created_at, duration_secs,
+                      prompt_tokens, completion_tokens, estimated_cost
                FROM queries WHERE repo_id = ? ORDER BY created_at DESC LIMIT ?""",
             (repo_id, limit),
         )
@@ -825,15 +836,20 @@ class SqliteStore:
     def insert_cached_query(
         self, prompt: str, answer: str, evidence_json: str,
         source_query_id: int, duration_secs: float, repo_id: int = 1,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        estimated_cost: float | None = None,
     ) -> int:
         """Insert a cached query entry pointing to its source."""
         now = datetime.now(timezone.utc).isoformat()
         cur = self._conn.execute(
             """INSERT INTO queries
                (prompt, answer, evidence, status, created_at, completed_at,
-                duration_secs, source_query_id, repo_id)
-               VALUES (?, ?, ?, 'cached', ?, ?, ?, ?, ?)""",
-            (prompt, answer, evidence_json, now, now, duration_secs, source_query_id, repo_id),
+                duration_secs, source_query_id, repo_id,
+                prompt_tokens, completion_tokens, estimated_cost)
+               VALUES (?, ?, ?, 'cached', ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (prompt, answer, evidence_json, now, now, duration_secs, source_query_id, repo_id,
+             prompt_tokens, completion_tokens, estimated_cost),
         )
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]

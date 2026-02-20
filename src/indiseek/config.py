@@ -25,7 +25,7 @@ DATA_DIR: Path = Path(os.getenv("DATA_DIR", "./data"))
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
 # Models
-GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
 EMBEDDING_DIMS: int = int(os.getenv("EMBEDDING_DIMS", "768"))
 

@@ -11,11 +11,12 @@ from google import genai
 from google.genai import types
 
 from indiseek import config
-from indiseek.agent.loop import _error_hint, create_agent_loop
+from indiseek.agent.loop import _error_hint, _extract_usage, create_agent_loop
 from indiseek.agent.strategy import (
     EvidenceStep,
     QueryResult,
     ToolRegistry,
+    UsageStats,
     build_tool_registry,
     strategy_registry,
 )
@@ -193,6 +194,7 @@ class ClassicAgentLoop:
         logger.info("Classic agent run started: %r", prompt[:120])
         run_t0 = time.perf_counter()
         evidence: list[EvidenceStep] = []
+        usage = UsageStats()
         tool_call_count = 0
         self._file_cache.clear()
         self._query_cache.clear()
@@ -262,6 +264,7 @@ class ClassicAgentLoop:
                 config=gen_config,
             )
             llm_elapsed = time.perf_counter() - t0
+            usage.add(*_extract_usage(response))
 
             # Append the model's response to conversation history
             model_content = response.candidates[0].content
@@ -276,7 +279,11 @@ class ClassicAgentLoop:
                     "LLM returned final answer: %d chars (LLM %.2fs, total %.2fs)",
                     len(answer), llm_elapsed, total,
                 )
-                return QueryResult(answer=answer, evidence=evidence, strategy_name=self.name)
+                return QueryResult(
+                    answer=answer, evidence=evidence,
+                    metadata={"usage": usage.to_dict(self._model)},
+                    strategy_name=self.name,
+                )
 
             # Log what the model wants to call
             call_names = [c.name for c in response.function_calls]
@@ -403,6 +410,7 @@ class ClassicAgentLoop:
             answer="Agent reached maximum iterations without producing a final answer. "
             "Partial evidence has been collected.",
             evidence=evidence,
+            metadata={"usage": usage.to_dict(self._model)},
             strategy_name=self.name,
         )
 

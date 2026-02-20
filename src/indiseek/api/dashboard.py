@@ -85,9 +85,19 @@ class EvidenceStepResponse(BaseModel):
     detail: str
 
 
+class UsageResponse(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    requests: int = 0
+    estimated_cost: float = 0.0
+    model: str = ""
+
+
 class SyncQueryResponse(BaseModel):
     answer: str
     evidence: list[EvidenceStepResponse]
+    usage: UsageResponse | None = None
 
 
 @router.post("/query", response_model=SyncQueryResponse)
@@ -123,7 +133,13 @@ def sync_query(req: SyncQueryRequest):
             {"tool": e.tool, "args": e.args, "summary": e.summary}
             for e in result.evidence
         ]
-        store.complete_query(query_id, result.answer, json.dumps(evidence), elapsed)
+        usage_dict = result.metadata.get("usage", {})
+        store.complete_query(
+            query_id, result.answer, json.dumps(evidence), elapsed,
+            prompt_tokens=usage_dict.get("prompt_tokens"),
+            completion_tokens=usage_dict.get("completion_tokens"),
+            estimated_cost=usage_dict.get("estimated_cost"),
+        )
         return SyncQueryResponse(
             answer=result.answer,
             evidence=[
@@ -133,6 +149,7 @@ def sync_query(req: SyncQueryRequest):
                 )
                 for e in result.evidence
             ],
+            usage=UsageResponse(**usage_dict) if usage_dict else None,
         )
     except Exception as e:
         elapsed = time.perf_counter() - t0
@@ -984,13 +1001,18 @@ def run_query_op(req: QueryRequest):
                 {"tool": e.tool, "args": e.args, "summary": e.summary}
                 for e in result.evidence
             ]
+            usage_dict = result.metadata.get("usage", {})
             qstore.complete_query(
                 query_id, result.answer, json.dumps(evidence), duration,
+                prompt_tokens=usage_dict.get("prompt_tokens"),
+                completion_tokens=usage_dict.get("completion_tokens"),
+                estimated_cost=usage_dict.get("estimated_cost"),
             )
             return {
                 "query_id": query_id,
                 "answer": result.answer,
                 "evidence": evidence,
+                "usage": usage_dict or None,
             }
         except Exception as exc:
             duration = time.monotonic() - start
