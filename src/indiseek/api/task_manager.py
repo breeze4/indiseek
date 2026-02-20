@@ -1,4 +1,4 @@
-"""Background task manager for indexing operations."""
+"""Background task manager for indexing and query operations."""
 
 from __future__ import annotations
 
@@ -14,43 +14,51 @@ logger = logging.getLogger(__name__)
 
 
 class TaskManager:
-    """Manages background indexing tasks with progress streaming.
+    """Manages background tasks with progress streaming.
 
-    Only one task runs at a time. Progress events are routed to
-    subscriber queues for SSE streaming.
+    Exclusive tasks (indexing ops) are restricted to one at a time.
+    Concurrent tasks (queries) can run in parallel without limit.
     """
 
     def __init__(self) -> None:
-        self._executor = ThreadPoolExecutor(max_workers=1)
+        # Unbounded pool: queries are all I/O-bound (Gemini API calls)
+        self._executor = ThreadPoolExecutor(max_workers=None)
         self._tasks: dict[str, dict[str, Any]] = {}
         self._subscribers: dict[str, list[queue.Queue]] = {}
         self._lock = threading.Lock()
 
-    def submit(self, name: str, fn: Callable, task_id: str | None = None, **kwargs) -> str:
+    def submit(
+        self, name: str, fn: Callable, task_id: str | None = None,
+        kind: str = "exclusive", **kwargs,
+    ) -> str:
         """Submit a task for background execution.
 
         Args:
-            name: Human-readable task name (e.g. "treesitter").
+            name: Human-readable task name (e.g. "treesitter", "query").
             fn: Callable to execute.
             task_id: Optional pre-generated task ID. If None, one is generated.
+            kind: "exclusive" tasks (indexing) block if another exclusive task
+                  is running. "concurrent" tasks (queries) always run.
             **kwargs: Arguments passed to fn.
 
         Returns:
             Task ID (UUID string).
 
         Raises:
-            RuntimeError: If a task is already running.
+            RuntimeError: If kind="exclusive" and an exclusive task is running.
         """
         with self._lock:
-            for t in self._tasks.values():
-                if t["status"] == "running":
-                    raise RuntimeError("A task is already running")
+            if kind == "exclusive":
+                for t in self._tasks.values():
+                    if t["status"] == "running" and t.get("kind") == "exclusive":
+                        raise RuntimeError("An exclusive task is already running")
 
             if task_id is None:
                 task_id = str(uuid.uuid4())
             self._tasks[task_id] = {
                 "id": task_id,
                 "name": name,
+                "kind": kind,
                 "status": "running",
                 "progress_events": [],
                 "result": None,
@@ -94,10 +102,17 @@ class TaskManager:
         with self._lock:
             return [dict(t) for t in self._tasks.values()]
 
-    def has_running_task(self) -> bool:
-        """Check if any task is currently running."""
+    def has_running_exclusive_task(self) -> bool:
+        """Check if an exclusive (indexing) task is currently running."""
         with self._lock:
-            return any(t["status"] == "running" for t in self._tasks.values())
+            return any(
+                t["status"] == "running" and t.get("kind") == "exclusive"
+                for t in self._tasks.values()
+            )
+
+    # Keep old name as an alias so existing callers still work
+    def has_running_task(self) -> bool:
+        return self.has_running_exclusive_task()
 
     def subscribe(self, task_id: str) -> queue.Queue | None:
         """Subscribe to progress events for a task.

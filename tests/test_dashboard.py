@@ -41,14 +41,20 @@ def client(store, db_path, tmp_path):
         mock_config.LANCEDB_PATH = tmp_path / "lancedb"
         mock_config.EMBEDDING_DIMS = 768
 
-        from indiseek.api.dashboard import router, _task_manager
-        # Reset task manager to avoid cross-test interference
-        _task_manager._tasks.clear()
-        _task_manager._subscribers.clear()
+        from indiseek.api import dashboard
+        from indiseek.api.dashboard import router
+        from indiseek.api.task_manager import TaskManager
 
-        app = FastAPI()
-        app.include_router(router)
-        yield TestClient(app)
+        # Fresh task manager per test to avoid cross-test thread pool contention
+        fresh_tm = TaskManager()
+        old_tm = dashboard._task_manager
+        dashboard._task_manager = fresh_tm
+        try:
+            app = FastAPI()
+            app.include_router(router)
+            yield TestClient(app)
+        finally:
+            dashboard._task_manager = old_tm
 
 
 class TestReposCRUD:
@@ -198,6 +204,72 @@ class TestFreshnessCheck:
         resp = client.post("/repos/999/check")
         assert resp.status_code == 404
 
+    def test_check_missing_local_path(self, client, store):
+        """Check returns 400 when the repo's local path doesn't exist on disk."""
+        repo_id = store.insert_repo("test", "/nonexistent/path")
+        resp = client.post(f"/repos/{repo_id}/check")
+        assert resp.status_code == 400
+
+    def test_check_current(self, client, store, tmp_path):
+        """Check returns status=current when indexed_sha matches remote."""
+        repo_dir = tmp_path / "checkrepo"
+        repo_dir.mkdir()
+        sha = "abc123def"
+        repo_id = store.insert_repo("checkrepo", str(repo_dir))
+        store.update_repo(repo_id, indexed_commit_sha=sha)
+
+        mock_result = MagicMock(stdout=sha + "\n", returncode=0)
+        with patch("indiseek.git_utils.fetch_remote"), \
+             patch("indiseek.api.dashboard.subprocess.run", return_value=mock_result), \
+             patch("indiseek.git_utils.count_commits_between", return_value=0), \
+             patch("indiseek.git_utils.get_changed_files", return_value=[]):
+            resp = client.post(f"/repos/{repo_id}/check")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "current"
+        assert data["commits_behind"] == 0
+
+    def test_check_stale(self, client, store, tmp_path):
+        """Check returns status=stale with commits_behind when diverged."""
+        repo_dir = tmp_path / "checkrepo"
+        repo_dir.mkdir()
+        old_sha = "old123"
+        new_sha = "new456"
+        repo_id = store.insert_repo("checkrepo", str(repo_dir))
+        store.update_repo(repo_id, indexed_commit_sha=old_sha)
+
+        mock_result = MagicMock(stdout=new_sha + "\n", returncode=0)
+        with patch("indiseek.git_utils.fetch_remote"), \
+             patch("indiseek.api.dashboard.subprocess.run", return_value=mock_result), \
+             patch("indiseek.git_utils.count_commits_between", return_value=5), \
+             patch("indiseek.git_utils.get_changed_files", return_value=["a.ts", "b.ts"]):
+            resp = client.post(f"/repos/{repo_id}/check")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "stale"
+        assert data["commits_behind"] == 5
+        assert data["changed_files"] == ["a.ts", "b.ts"]
+
+    def test_check_not_indexed(self, client, store, tmp_path):
+        """Check returns status=not_indexed when indexed_sha is null."""
+        repo_dir = tmp_path / "checkrepo"
+        repo_dir.mkdir()
+        head_sha = "head789"
+        repo_id = store.insert_repo("checkrepo", str(repo_dir))
+        # No indexed_commit_sha set
+
+        mock_result = MagicMock(stdout="whatever\n", returncode=0)
+        with patch("indiseek.git_utils.fetch_remote"), \
+             patch("indiseek.api.dashboard.subprocess.run", return_value=mock_result), \
+             patch("indiseek.git_utils.get_head_sha", return_value=head_sha):
+            resp = client.post(f"/repos/{repo_id}/check")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "not_indexed"
+        assert data["commits_behind"] == -1
+        assert data["current_sha"] == head_sha
+        assert data["indexed_sha"] is None
+
     def test_check_no_local_path(self, client, store):
         repo_id = store.insert_repo("test", "/nonexistent/path")
         resp = client.post(f"/repos/{repo_id}/check")
@@ -206,6 +278,18 @@ class TestFreshnessCheck:
 
 class TestSyncEndpoint:
     """Test the sync endpoint."""
+
+    def _wait_for_task(self, client, task_id, timeout=5.0):
+        """Poll until a background task completes or fails."""
+        import time
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            resp = client.get(f"/tasks/{task_id}")
+            data = resp.json()
+            if data["status"] in ("completed", "failed"):
+                return data
+            time.sleep(0.05)
+        raise TimeoutError(f"Task {task_id} did not finish in {timeout}s")
 
     def test_sync_not_found(self, client):
         resp = client.post("/repos/999/sync")
@@ -220,6 +304,116 @@ class TestSyncEndpoint:
         data = resp.json()
         assert data["name"] == "sync"
         assert data["status"] == "running"
+
+    def test_sync_up_to_date(self, client, store, tmp_path):
+        """Sync returns up_to_date when indexed_sha == HEAD after pull."""
+        repo_dir = tmp_path / "syncrepo"
+        repo_dir.mkdir()
+        sha = "abc123"
+        repo_id = store.insert_repo("syncrepo", str(repo_dir))
+        store.update_repo(repo_id, indexed_commit_sha=sha)
+
+        with patch("indiseek.git_utils.pull_remote"), \
+             patch("indiseek.git_utils.get_head_sha", return_value=sha):
+            resp = client.post(f"/repos/{repo_id}/sync")
+            assert resp.status_code == 200
+            task = self._wait_for_task(client, resp.json()["task_id"])
+            assert task["status"] == "completed"
+            assert task["result"]["status"] == "up_to_date"
+
+    def test_sync_with_changed_files(self, client, store, db_path, tmp_path):
+        """Sync re-parses changed .ts files and rebuilds lexical index."""
+        repo_dir = tmp_path / "syncrepo"
+        repo_dir.mkdir()
+        (repo_dir / "src").mkdir()
+        ts_file = repo_dir / "src" / "main.ts"
+        ts_file.write_text("export function hello(): string { return 'hi'; }")
+
+        old_sha = "old123"
+        new_sha = "new456"
+        repo_id = store.insert_repo("syncrepo", str(repo_dir))
+        store.update_repo(repo_id, indexed_commit_sha=old_sha)
+
+        with patch("indiseek.git_utils.pull_remote"), \
+             patch("indiseek.git_utils.get_head_sha", return_value=new_sha), \
+             patch("indiseek.git_utils.get_changed_files", return_value=["src/main.ts"]), \
+             patch("indiseek.indexer.pipeline.run_lexical", return_value={"documents_indexed": 1}):
+            resp = client.post(f"/repos/{repo_id}/sync")
+            task = self._wait_for_task(client, resp.json()["task_id"])
+            assert task["status"] == "completed"
+            assert task["result"]["status"] == "synced"
+            assert task["result"]["changed_files"] == 1
+
+        # Verify file was parsed — check for chunks via a fresh connection
+        fresh_store = SqliteStore(db_path)
+        chunks = fresh_store.get_chunks_by_file("src/main.ts", repo_id=repo_id)
+        assert len(chunks) > 0
+
+    def test_sync_with_deleted_files(self, client, store, db_path, tmp_path):
+        """Sync clears data for deleted files."""
+        repo_dir = tmp_path / "syncrepo"
+        repo_dir.mkdir()
+        old_sha = "old123"
+        new_sha = "new456"
+        repo_id = store.insert_repo("syncrepo", str(repo_dir))
+        store.update_repo(repo_id, indexed_commit_sha=old_sha)
+
+        # Pre-populate some data for a file that will be "deleted"
+        from indiseek.storage.sqlite_store import Chunk
+        store.insert_chunks([Chunk(
+            id=None, file_path="deleted.ts", symbol_name="foo",
+            chunk_type="function", content="code",
+            start_line=1, end_line=5,
+        )], repo_id=repo_id)
+        assert len(store.get_chunks_by_file("deleted.ts", repo_id=repo_id)) == 1
+
+        # deleted.ts doesn't exist on disk, so it's a deleted file
+        with patch("indiseek.git_utils.pull_remote"), \
+             patch("indiseek.git_utils.get_head_sha", return_value=new_sha), \
+             patch("indiseek.git_utils.get_changed_files", return_value=["deleted.ts"]), \
+             patch("indiseek.indexer.pipeline.run_lexical", return_value={"documents_indexed": 0}):
+            resp = client.post(f"/repos/{repo_id}/sync")
+            task = self._wait_for_task(client, resp.json()["task_id"])
+            assert task["status"] == "completed"
+
+        # Verify chunks were cleared
+        fresh_store = SqliteStore(db_path)
+        chunks = fresh_store.get_chunks_by_file("deleted.ts", repo_id=repo_id)
+        assert len(chunks) == 0
+
+    def test_sync_null_indexed_sha_does_full_reindex(self, client, store, tmp_path):
+        """When indexed_sha is null, sync does a full re-index."""
+        repo_dir = tmp_path / "syncrepo"
+        repo_dir.mkdir()
+        new_sha = "new456"
+        repo_id = store.insert_repo("syncrepo", str(repo_dir))
+
+        with patch("indiseek.git_utils.pull_remote"), \
+             patch("indiseek.git_utils.get_head_sha", return_value=new_sha), \
+             patch("indiseek.indexer.pipeline.run_treesitter", return_value={"files_parsed": 0}) as mock_ts, \
+             patch("indiseek.indexer.pipeline.run_lexical", return_value={"documents_indexed": 0}):
+            resp = client.post(f"/repos/{repo_id}/sync")
+            task = self._wait_for_task(client, resp.json()["task_id"])
+            assert task["status"] == "completed"
+            assert task["result"]["status"] == "synced"
+            mock_ts.assert_called_once()
+
+    def test_sync_rejects_concurrent_task(self, client, store, tmp_path):
+        """Sync returns 409 when another task is already running."""
+        from indiseek.api import dashboard
+        repo_dir = tmp_path / "syncrepo"
+        repo_dir.mkdir()
+        repo_id = store.insert_repo("syncrepo", str(repo_dir))
+
+        # Simulate a running task
+        tm = dashboard._task_manager
+        tm._tasks["fake"] = {"id": "fake", "name": "other", "kind": "exclusive",
+                              "status": "running", "progress_events": [], "result": None, "error": None}
+        try:
+            resp = client.post(f"/repos/{repo_id}/sync")
+            assert resp.status_code == 409
+        finally:
+            tm._tasks.pop("fake", None)
 
 
 class TestIndexingOpsRepoId:

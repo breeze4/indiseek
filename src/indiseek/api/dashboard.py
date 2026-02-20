@@ -30,21 +30,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 _task_manager = TaskManager()
 
-# Lazy-initialized strategies, keyed by (strategy_name, repo_id)
-_strategy_cache: dict[tuple[str, int], object] = {}
-
-
-def _get_strategy(name: str, repo_id: int = 1):
-    """Get or create a cached strategy instance."""
-    key = (name, repo_id)
-    if key not in _strategy_cache:
-        logger.info("Initializing strategy %r for repo_id=%d...", name, repo_id)
-        t0 = time.perf_counter()
-        _strategy_cache[key] = strategy_registry.create(name, repo_id=repo_id)
-        logger.info("Strategy %r ready (%.2fs)", name, time.perf_counter() - t0)
-    return _strategy_cache[key]
-
-
 def _resolve_strategy_name(prompt: str, mode: str) -> str:
     """Resolve 'auto' mode to a concrete strategy name."""
     if mode == "auto":
@@ -123,7 +108,7 @@ def sync_query(req: SyncQueryRequest):
     t0 = time.perf_counter()
     try:
         logger.info("Using strategy %r", strategy_name)
-        strategy = _get_strategy(strategy_name, repo_id=req.repo_id)
+        strategy = strategy_registry.create(strategy_name, repo_id=req.repo_id)
         result = strategy.run(req.prompt)
         elapsed = time.perf_counter() - t0
         logger.info(
@@ -1131,9 +1116,6 @@ def run_query_op(req: QueryRequest):
                 "evidence": evidence,
             }
 
-    if _task_manager.has_running_task():
-        raise HTTPException(status_code=409, detail="A task is already running")
-
     strategy_name = _resolve_strategy_name(prompt, req.mode)
     available = strategy_registry.list_strategies()
     if strategy_name not in available:
@@ -1177,7 +1159,7 @@ def run_query_op(req: QueryRequest):
             qstore.fail_query(query_id, str(exc))
             raise
 
-    _task_manager.submit("query", _run, task_id=task_id)
+    _task_manager.submit("query", _run, task_id=task_id, kind="concurrent")
     return {"task_id": task_id, "name": "query", "status": "running", "query_id": query_id}
 
 
