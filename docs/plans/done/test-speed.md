@@ -82,3 +82,7 @@ Per the `--durations=0` output, setup is **0.4–1.2s per test** while actual te
 ### What was deferred
 - Phase 2 marker annotations on individual tests (diminishing returns at 22s total)
 - Mocking `time.sleep` in `test_cache.py` (only 0.35s total, not worth the complexity)
+
+## Status: Archived (partial completion)
+
+Goal achieved — 7.2x speedup (159s → 22s). Remaining checklist items in Phases 2/4 were explicitly deferred as diminishing returns. Original phase checklists left unchecked but the Results section above reflects actual work done.
