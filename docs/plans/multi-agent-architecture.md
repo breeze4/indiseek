@@ -410,3 +410,7 @@ The real cost advantage comes if we parallelize researchers — wall clock time 
 
 **Risk: Verifier finds issues but can't fix them.** If verification reveals inaccuracies but the correction is wrong.
 - Mitigation: Only apply corrections where the tool result clearly contradicts the claim. Flag ambiguous cases as "unverified" rather than attempting correction.
+
+## Post-Implementation Notes
+
+- Steps 1–7 added `UsageStats` return values to all agent methods (plan, research, synthesize, verify now return `tuple[result, UsageStats]`). The 11 tests in `test_multi_agent.py` that call these methods were not updated at the time, causing 9 test failures. Fixed by unpacking the tuple in each test.

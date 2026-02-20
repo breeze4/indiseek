@@ -145,7 +145,7 @@ class TestPlannerAgent:
 
         mock_client.models.generate_content.return_value = _make_text_response(plan_json)
 
-        plan = planner.plan("How does CSS HMR work?", "src/\n  main.ts")
+        plan, usage = planner.plan("How does CSS HMR work?", "src/\n  main.ts")
 
         assert isinstance(plan, ResearchPlan)
         assert plan.original_question == "How does CSS HMR work?"
@@ -162,7 +162,7 @@ class TestPlannerAgent:
             "This is not valid JSON at all"
         )
 
-        plan = planner.plan("How does auth work?", "src/\n  main.ts")
+        plan, usage = planner.plan("How does auth work?", "src/\n  main.ts")
 
         assert isinstance(plan, ResearchPlan)
         assert len(plan.sub_questions) == 1
@@ -177,7 +177,7 @@ class TestPlannerAgent:
             json.dumps({"sub_questions": []})
         )
 
-        plan = planner.plan("What?", "src/")
+        plan, usage = planner.plan("What?", "src/")
 
         assert len(plan.sub_questions) == 1
         assert plan.sub_questions[0].question == "What?"
@@ -199,7 +199,7 @@ class TestPlannerAgent:
         )
         mock_client.models.generate_content.return_value = _make_text_response(response_text)
 
-        plan = planner.plan("Multi-part question", "src/")
+        plan, usage = planner.plan("Multi-part question", "src/")
 
         assert len(plan.sub_questions) == 2
 
@@ -229,7 +229,7 @@ class TestResearcherAgent:
             target_area="src/",
             initial_actions=["read_map(path='src')"],
         )
-        bundle = researcher.research(sq, "src/\n  main.ts — Main entry")
+        bundle, usage = researcher.research(sq, "src/\n  main.ts — Main entry")
 
         assert isinstance(bundle, EvidenceBundle)
         assert bundle.sub_question == "What is the entry point?"
@@ -258,7 +258,7 @@ class TestResearcherAgent:
         sq = SubQuestion(question="How does X work?", target_area="src/")
 
         with patch.object(types.Part, "from_function_response", side_effect=_capture_fn_response):
-            researcher.research(sq, "src/")
+            bundle, usage = researcher.research(sq, "src/")
 
         assert len(captured_results) == 1
         assert "[QUESTION: How does X work?]" in captured_results[0]
@@ -272,7 +272,7 @@ class TestResearcherAgent:
         mock_client.models.generate_content.return_value = text_resp
 
         sq = SubQuestion(question="Simple question", target_area="")
-        bundle = researcher.research(sq, "src/")
+        bundle, usage = researcher.research(sq, "src/")
 
         # Only 1 LLM call (no tool calls)
         assert mock_client.models.generate_content.call_count == 1
@@ -325,7 +325,7 @@ class TestSynthesizerAgent:
             "The client applies updates by replacing <style> tag content (src/client.ts:50)."
         )
 
-        answer = synth.synthesize("How does CSS HMR work?", bundles)
+        answer, usage = synth.synthesize("How does CSS HMR work?", bundles)
 
         assert "chokidar" in answer
         assert "src/watcher.ts" in answer
@@ -337,7 +337,7 @@ class TestSynthesizerAgent:
         synth = SynthesizerAgent(mock_client, "gemini-2.0-pro")
 
         mock_client.models.generate_content.return_value = _make_text_response("Answer.")
-        synth.synthesize("Q?", [])
+        answer, usage = synth.synthesize("Q?", [])
 
         # Verify the model passed to generate_content
         call_kwargs = mock_client.models.generate_content.call_args
@@ -367,7 +367,7 @@ class TestVerifierAgent:
         )
         mock_client.models.generate_content.side_effect = [fn_resp, text_resp]
 
-        results = verifier.verify(
+        results, usage = verifier.verify(
             "createServer is in src/server/index.ts and uses Express.",
             ["Verify: what framework does createServer use?"],
             "src/",
@@ -393,7 +393,7 @@ class TestVerifierAgent:
         )
         mock_client.models.generate_content.return_value = text_resp
 
-        results = verifier.verify(
+        results, usage = verifier.verify(
             "Function X is defined in file Y.",
             [],
             "src/",
